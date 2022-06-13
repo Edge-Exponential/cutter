@@ -1,353 +1,202 @@
-#**********************************Declarations*********************************************
 import RPi.GPIO as GPIO
 import time
-import _thread
+import threading
 from tkinter import *
 import tkinter.font as font
-import sys
-import tkinter as tk
 
-#OPEN 12,19,26
-#weird 9,10,11,14,15
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
+GPIO.setup(4, GPIO.OUT)  # power to linear actuator
+GPIO.setup(21, GPIO.OUT)  # Direction to linear actuator
+GPIO.setup(13, GPIO.OUT)  # Pulse pin motor 1
+GPIO.setup(26, GPIO.OUT)  # Direction pin motor 1
+GPIO.setup(19, GPIO.OUT)  # Pulse pin motor 2
+GPIO.setup(20, GPIO.OUT)  # Direction pin motor 2
 
-GPIO.setup(24,  GPIO.OUT) #relay
-GPIO.setup(25, GPIO.OUT) #relay
-GPIO.output(24, GPIO.HIGH)
-GPIO.output(25,GPIO.HIGH)
+motor_time_sleep = [0.001, 0.0012]
 
-ylim_pin=2
-cleanerlim_pin=3
-estop_pin=5
-zhall_pin=7
-xhall_pin=8
-xlim_pin=20
+GPIO.output(4, GPIO.HIGH)  # relay initiation
+GPIO.output(21, GPIO.HIGH)  # relay initiation
 
-GPIO.setup(ylim_pin, GPIO.OUT)
-GPIO.output(ylim_pin, GPIO.HIGH) #yaxis pullup
-GPIO.setup(cleanerlim_pin, GPIO.IN)
-GPIO.setup(estop_pin, GPIO.OUT) 
-GPIO.output(estop_pin, GPIO.HIGH) #estop pullup
-GPIO.setup(zhall_pin, GPIO.IN) #Z_Axis Hall Effect Limit Switch
-GPIO.setup(xhall_pin, GPIO.IN) #X_Axis Hall Effect Limit Switch
-GPIO.setup(xlim_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP) # X_Axis Limit Switch
+# Some global variables for processes
+shutdown = True  # Determines if machine is shutdown
 
-x1clk_pin=4
-x1dir_pin=27
-x2clk_pin=16
-x2dir_pin=6
-yclk_pin=18
-ydir_pin=17
-zclk_pin=13
-zdir_pin=21
-cleanerclk_pin=22
-cleanerdir_pin=23
-GPIO.setup(x1clk_pin,  GPIO.OUT) #x-axis1 clk
-GPIO.setup(x1dir_pin, GPIO.OUT) #x-axis1 direction
-GPIO.setup(x2clk_pin,  GPIO.OUT) #x-axis2 clk
-GPIO.setup(x2dir_pin, GPIO.OUT) #x-axis2 direction
-GPIO.setup(yclk_pin, GPIO.OUT) #y-axis clk
-GPIO.setup(ydir_pin, GPIO.OUT) #y-axis direction
-GPIO.setup(zclk_pin, GPIO.OUT) #z-axis clk
-GPIO.setup(zdir_pin, GPIO.OUT) #z-axis direction
-GPIO.setup(cleanerclk_pin, GPIO.OUT) #Blade cleaner clk
-GPIO.setup(cleanerdir_pin, GPIO.OUT) #Blade cleaner direction
-
-motor_x_time_sleep = 0.001
-motor_x_time_sleep_acc =0.00
-motor_x_acc_steps =15
-motor_y_time_sleep = 0.001
-motor_y_time_sleep_end = 0.003
-motor_y_acc_steps =15
-motor_z_time_sleep = 0.0015
-motor_bladecleaner_time_sleep = 0.0004
-
-#screen setup
-window=Tk()
-stopFont=font.Font(family='Helvetica', size=50, weight='bold')
-font=font.Font(family='Helvetica', size=24, weight='normal')
+# screen setup
+window = Tk()
+stopFont = font.Font(family='Helvetica', size=100, weight='bold')
+font = font.Font(family='Helvetica', size=24, weight='normal')
 window.overrideredirect(1)
 window.geometry('800x480')
 
-#*************************************FUNCTIONS*********************************************
 
-
-#********Screen Functions**********************
+# screen Functions
 def killscreen():
     window.destroy()
 
-def switchbuttonstate():
-    if(GPIO.input(xhall_pin)==0 and GPIO.input(ylim_pin)==0 and GPIO.input(zhall_pin)==0):
-        text14['state']=tk.NORMAL
-        textpiecut['state']=tk.NORMAL
-        changebladebutton['state']=tk.NORMAL
-        cleanbutton['state']=tk.NORMAL
-    else:
-        text14['state']=tk.DISABLED
-        textpiecut['state']=tk.DISABLED
-        changebladebutton['state']=tk.DISABLED
-        cleanbutton['state']=tk.DISABLED
-        
-#********Vision***************************
-import numpy as np
-import cv2 as cv
 
-class img:
-  #class variables:
-  pizza_center=(-23,481) #datum for all cutter axis movements
-  pizza_diam=400  #pizza size identification
-  pix2in=.035
-  x_step=1.925 #x axis conversion factor from pixels to steps (or inches? not sure yet)
-  x_offset=314 #number of pixels to center of cut plate
-  y_step=1.925 #y axis conversion...
-  y_offset=53	#number of pixels to edge of blade
-  
-  #class functions:
-  def main(calibrate=False):
-      print("LET'S PARTY!")
-      home()
-      movey(20)
-      time.sleep(.3)
-      movey()
-      img.capture()
-      img.locate(img.circles('x',calibrate))
-      if calibrate: img.calibrate()
-      else: partycut(img.pizza_diam)
-  def capture(name='x'):
-      pic=cv.VideoCapture(0)
-      ret,img=pic.read()  #save capture
-      cv.normalize(img,img,50,255,cv.NORM_MINMAX)
-      cv.imwrite(name+'.jpg',img)
-  def circles(name='x',display=False):
-      img=cv.imread(name+'.jpg') #read file from img.capture()
-      img=cv.medianBlur(img,5)  #reduce image noise
-      img=cv.cvtColor(img,cv.COLOR_BGR2GRAY) #change image array structure to grayscale
-      circles=None
-      i=0
-      while type(circles).__module__ is not np.__name__:
-          circles=cv.HoughCircles(img,cv.HOUGH_GRADIENT, 
-              1,
-              100, #min center distance
-              param1=150-2*i, #edge sensitivity max
-              param2=75-i,  #edge sensitivity min
-              minRadius=90, #circle min radius (set to just under 7" px size)
-              maxRadius=0) 
-          i+=1
-      circles=circles[0]
-      if display==True: #open window to review circle accuracy, optimize parameters
-          print(circles)
-          for i in circles:
-             i=[int(j) for j in circles[0]]
-             cv.circle(img,(i[0],i[1]),i[2],(255,0,0),2)
-             cv.circle(img,(i[0],i[1]),2,(255,0,0),3)
-             cv.putText(img,'('+str(i[0])+','+str(i[1])+')'+str(i[2]),(i[0],i[1]+15),
-                 cv.FONT_HERSHEY_PLAIN,1,(255,0,0),bottomLeftOrigin=False)
-             cv.line(img,(i[0],0),(i[0],i[1]-i[2]),(255,0,0),2)
-             cv.putText(img,str(i[1]-i[2]),(i[0]+5,10),
-                 cv.FONT_HERSHEY_PLAIN,1,(255,0,0),bottomLeftOrigin=False)
-             cv.line(img,(0,i[1]),(i[0]-i[2],i[1]),(255,0,0),2)
-             cv.putText(img,str(i[0]-i[2]),(0,i[1]-5),
-                 cv.FONT_HERSHEY_PLAIN,1,(255,0,0),bottomLeftOrigin=False)
-          cv.imwrite(name+'-circle.jpg',img)
-          cv.imshow('1',img)
-          if cv.waitKey(0)==27: cv.destroyAllWindows()
-      return circles[0]  
-  def locate(circle): #take img.circles() output, convert to format readable by the rest of the code
-      img.pizza_center=((circle[0]-img.x_offset)*img.x_step,(circle[1]-img.y_offset)*img.y_step)
-      img.pizza_diam=2*round(circle[2]*img.pix2in)
-      print(img.pizza_center,img.pizza_diam)
-      
-  def calibrate(): #relate pixel distances to axes' stepper clock duration
-      #img.x_steppix=1
-      #img.y_steppix=1
-      movey(img.pizza_center[1])
-      movex(img.pizza_center[0])
-      
-#********Move x axis**********************
-def movex(steps=1000):
-    if steps<0: #reverse
-        GPIO.output(x1dir_pin, GPIO.HIGH)
-        GPIO.output(x2dir_pin, GPIO.LOW)
-        steps=-steps
-    else:	#forward
-        GPIO.output(x1dir_pin,GPIO.LOW)
-        GPIO.output(x2dir_pin, GPIO.HIGH)
-    i=1
-    while i<=steps and GPIO.input(estop_pin)==0: #120
-        if steps>800 and (GPIO.input(xhall_pin)==0 or GPIO.input(xlim_pin)==0): break #home
-        GPIO.output(x1clk_pin, GPIO.HIGH)
-        GPIO.output(x2clk_pin, GPIO.HIGH)
-        time.sleep(motor_x_time_sleep)
-        GPIO.output(x1clk_pin, GPIO.LOW)
-        GPIO.output(x2clk_pin, GPIO.LOW)
-        time.sleep(motor_x_time_sleep)
-        i+=1
-    return i
-    
-#********Move y axis**********************
-def movey(steps=-1000):
-    if steps<0: #reverse
-        GPIO.output(ydir_pin,GPIO.HIGH)
-        steps=-steps
-    else:
-        GPIO.output(ydir_pin,GPIO.LOW)
-    i=0
-    while i<=steps and GPIO.input(estop_pin)==0:
-        if GPIO.input(ydir_pin) and GPIO.input(ylim_pin)==0: break #home
-        GPIO.output(yclk_pin, GPIO.HIGH)
-        time.sleep(motor_y_time_sleep)
-        GPIO.output(yclk_pin, GPIO.LOW)
-        time.sleep(motor_y_time_sleep)
-        i+=1
-    return i
+# Cut functions
 
-
-#*************Move z axis***************
-def movez(steps=0):
-    GPIO.output(zdir_pin, GPIO.LOW)
-    if steps==0 and GPIO.input(zhall_pin)==1 and GPIO.input(estop_pin)==0:
-        i=1
-        while GPIO.input(zhall_pin)==1 and GPIO.input(estop_pin)==0:
-            
-            GPIO.output(zclk_pin, GPIO.HIGH)
-            time.sleep(motor_z_time_sleep)
-            GPIO.output(zclk_pin, GPIO.LOW)
-            time.sleep(motor_z_time_sleep)
-        while i<3:	#jog a bit further
-            GPIO.output(zclk_pin, GPIO.HIGH)
-            time.sleep(motor_z_time_sleep)
-            GPIO.output(zclk_pin, GPIO.LOW)
-            time.sleep(motor_z_time_sleep)
-            i+=1
-        return i   
-    elif steps<0:
-        GPIO.output(zdir_pin, GPIO.LOW)
-        steps=-steps
-    else:
-        GPIO.output(zdir_pin, GPIO.HIGH)        
-    i=1
-    while i<=steps  and GPIO.input(estop_pin)==0:
-        GPIO.output(zclk_pin, GPIO.HIGH)
-        time.sleep(motor_z_time_sleep)
-        GPIO.output(zclk_pin, GPIO.LOW)
-        time.sleep(motor_z_time_sleep)
-        i+=1
-                                                        
-#*************Other Movements***************
-def cleanblade(home=False):
-    i=1
-    if home: GPIO.output(cleanerdir_pin,GPIO.LOW)
-    else: GPIO.output(cleanerdir_pin,GPIO.HIGH)
-    while i<1360 and GPIO.input(estop_pin)==0:
-        if home and GPIO.input(cleanerlim_pin)==0: break
-        GPIO.output(cleanerclk_pin, GPIO.HIGH)
-        time.sleep(motor_bladecleaner_time_sleep)
-        GPIO.output(cleanerclk_pin, GPIO.LOW)
-        time.sleep(motor_bladecleaner_time_sleep)
-        i+=1
 def cut():
-    if GPIO.input(estop_pin)==0:
-        time.sleep(.2)
-        GPIO.output(25,GPIO.LOW)
-        time.sleep(.4)
-        GPIO.output(25,GPIO.HIGH)
-        time.sleep(0.1)
-def compressor():
-    if GPIO.input(24)==1:
-        GPIO.output(24, GPIO.LOW)
-    else:
-        GPIO.output(24, GPIO.HIGH)
-def home():
-    movez()
-    movey()
-    if GPIO.input(xhall_pin)==1 and GPIO.input(estop_pin)==0:
-        movey(450)
-        movez(102)
-        movex()
-        if GPIO.input(xhall_pin):
-            movex(-410)
-        movez()
-        movey()
-        switchbuttonstate()
-def changeblade():
-    movey(700)
-    switchbuttonstate()
-def movesimul(xstep,ystep,zstep):
-    _thread.start_new_thread(movey,(ystep,))
-    _thread.start_new_thread(movex,(xstep,))
-    _thread.start_new_thread(movez,(zstep,))
-    
-#*************Pizza Cut Selection***************
-def partycut(size):
-    print('PARTYING!')
-    dimensions={	#(xcuts,xspacing,ycuts,yspacing)
-        14:(2,210,6,100),
-        12:(2,190,5,100),
-        10:(2,180,5,80),
-        8:(1,0,3,50),
-        'LargeH&H':(2,180,7,70)} 
-    xcuts,xspacing,ycuts,yspacing=dimensions[size]
-    if(GPIO.input(xhall_pin)==0 and GPIO.input(ylim_pin)==0 and GPIO.input(zhall_pin)==0):
-        movesimul(img.pizza_center[0]-xspacing/2,img.pizza_center[1],100)
-        time.sleep(.7)
-        cut()
-        _thread.start_new_thread(cleanblade,())
-        if xspacing>0:
-            movex(xspacing)
-            cut()
-        movesimul(-int(xspacing/2),int(yspacing*(ycuts)/2),-100)
-        time.sleep(0.7)
-        for i in range(ycuts):
-            cut()
-            movey(-yspacing)
-        movesimul(-img.pizza_center[0]*800,-1000,0) #approx home
-        time.sleep(.5)
-        cleanblade(1)
-        #switchbuttonstate()
-    else: pass
-        #switchbuttonstate()
-def piecut():
-    movesimul(img.pizza_center[0],img.pizza_center[1],100)
-    cleanblade()
-    for i in range(3):
-        cut()
-        movez(-50)
-    cut()
-    movesimul(-img.pizza_center[0],-img.pizza_center[1],50)
-    time.sleep(1)
-    cleanblade(1)
-    switchbuttonstate()
-#**************************************Screen*************************************************
-window.title("EDGE EX CUTTER")
-namelabel=Label(window, text="EDGE EXPONENTIAL SM^RT CUTTER", font=font)
+    print(shutdown)
+    if not shutdown:
+        GPIO.output(4, GPIO.LOW)
+        GPIO.output(21, GPIO.LOW)
+        time.sleep(.20)  # .18
+        GPIO.output(21, GPIO.HIGH)
+        time.sleep(.21)
+        GPIO.output(4, GPIO.HIGH)
 
-namelabel.place(x=100,y=0)
-partylabel=Label(window, text="Party Cut:", font=font)
-partylabel.place(x=0,y=35)
-longtext= """
+
+def clean():
+    GPIO.output(4, GPIO.LOW)
+    GPIO.output(21, GPIO.LOW)
+    time.sleep(.5)
+    GPIO.output(21, GPIO.HIGH)
+    time.sleep(.5)
+    GPIO.output(4, GPIO.HIGH)
+
+
+def do_cut(size):
+    global shutdown
+    shutdown = False
+    print("CUT START")
+
+    stop_button.pack(expand=True)
+    window.update()
+
+    cut_thread = threading.Thread(target=sizecut, args=(size,))
+    cut_thread.start()
+
+
+def emergency_stop():
+    print("STOP")
+    global shutdown
+    shutdown = True
+    stop_button.pack_forget()
+
+
+motor_nums = {'1': [13, 26], '2': [20, 19]}
+
+
+def motorNum(num, steps):
+    x = 0
+    global shutdown
+    print(shutdown)
+    if not shutdown:
+        if steps < 0:
+            GPIO.output(motor_nums[num][0], GPIO.LOW)
+            steps = -1 * steps
+
+        else:
+            GPIO.output(motor_nums[num][0], GPIO.HIGH)
+
+        while (x < steps) & (not shutdown):
+            GPIO.output(motor_nums[num][1], GPIO.LOW)
+            time.sleep(motor_time_sleep[1])
+            GPIO.output(motor_nums[num][1], GPIO.HIGH)
+            time.sleep(motor_time_sleep[1])
+            x += 1
+
+
+size_nums = {'small': [250, 95, 110, 400, 150, 375],
+             'med': [170, 95, 150, 400, 200, 300],
+             'large': [150, 105, 180, 400, 220, 360]}
+
+
+# Takes size as input and does smallcut, medcut, or largecut
+def sizecut(size):
+    global shutdown
+    if not shutdown:
+        motorNum('2',size_nums[size][0])
+        cut()
+        times = 4 if size == 'small' else 5
+        for i in range(times):
+            motorNum('2', size_nums[size][1])
+            cut()
+        move1 = threading.Thread(target=motorNum, args=('2',-size_nums[size][2],))
+        move1.start()
+        motorNum('1',-size_nums[size][3])
+        move1.join()
+        cut()
+        motorNum('2',-size_nums[size][4])
+        cut()
+        move1 = threading.Thread(target=motorNum, args=('2',-size_nums[size][5]))
+        move1.start()
+        motorNum('1',size_nums[size][3])
+        move1.join()
+    shutdown = True
+    stop_button.pack_forget()
+    print("CUT END")
+
+
+def do_pie_cut(size):
+    global shutdown
+    shutdown = False
+    print("CUT START")
+
+    stop_button.pack(expand=True)
+    window.update()
+
+    cut_thread = threading.Thread(target=piecut)
+    cut_thread.start()
+
+
+def piecut():
+    global shutdown
+    if not shutdown:
+        move1 = threading.Thread(target=motorNum, args=('2',400,))
+        move1.start()
+        motorNum('1', 400)
+        move1.join()
+        cut()
+        motorNum('1', -200)
+        cut()
+        motorNum('1', -200)
+        cut()
+        motorNum('1', -200)
+        cut()
+        move2 = threading.Thread(target=motorNum, args=('2',-450,))
+        move2.start()
+        motorNum('1', 200)
+        move2.join()
+    shutdown = True
+    stop_button.pack_forget()
+    print("CUT END")
+
+
+#  ************************************Screen Design***************************************
+
+window.title("Smart Cutter 3.0")
+namelabel = Label(window, text="Smart Cutter 3.0", font=font)
+namelabel.place(x=285, y=5)
+
+longtext = """
 14\"
 Half & Half
 """
-text14=Button(window,text="Detect Size",font=font,bg="black",fg="white", command=img.main,height=4, width=35)
-text14.place(x=5,y=70)
+text14 = Button(window, text="14\"", font=font, bg="black", fg="white", command=lambda: [do_cut('large')], height=5, width=8)
+text14.place(x=5, y=60)
 
-pielabel=Label(window, text="Pie Cut:", font=font)
-pielabel.place(x=0,y=227)
-textpiecut=Button(window, text="All Sizes", font=font, bg="black", fg="white", command=piecut, height=4,width=7)
-textpiecut.place(x=5, y=262)
-safetylabel=Label(window, text="Safety System Status:", font=font)
-safetylabel.place(x=159, y=227)
+text14hh = Button(window, text=longtext, font=font, bg="black", fg="white", command=lambda: [do_cut('large')], height=5, width=8)
+text14hh.place(x=5, y=255)
 
-homebutton= Button(window, text="Home", font=font, bg="yellow", fg="black", command=home,height=1, width=7)
-homebutton.place(x=5, y=430)
-cleanbutton= Button(window, text="Clean Blade", font=font, bg="yellow", fg="black", command=cleanblade,height=1, width=9)
-cleanbutton.place(x=159, y=430)
-changebladebutton= Button(window, text="Change Blade", font=font, bg="yellow", fg="black", command=changeblade,height=1, width=10)
-changebladebutton.place(x=350, y=430)
-acbutton= Button(window, text="A/C", font=font, bg="yellow", fg="black", command=compressor, height=1, width=3)
-acbutton.place(x=557, y=430)
-exitbutton= Button(window, text="EXIT", font=font, bg="red2", fg="white", command=killscreen,height=1, width=7)
+text12 = Button(window, text="12\"", font=font, bg="black", fg="white", command=lambda: [do_cut('med')], height=5, width=8)
+text12.place(x=309, y=60)
+
+text10 = Button(window, text="10\"", font=font, bg="black", fg="white", command=lambda: [do_cut('small')], height=5, width=8)
+text10.place(x=309, y=255)
+
+text07 = Button(window, text="7\"", font=font, bg="black", fg="white", command=lambda: [do_cut('large')], height=5, width=8)
+text07.place(x=623, y=60)
+
+textpiecut = Button(window, text="Pie Cut", font=font, bg="black", fg="white", command=lambda: [piecut()], height=5, width=8)
+textpiecut.place(x=623, y=255)
+
+exitbutton = Button(window, text="EXIT", font=font, bg="red2", fg="white", command=killscreen, height=1, width=7)
 exitbutton.place(x=639, y=430)
-switchbuttonstate()
+
+stop_button = Button(window, text="STOP", font=stopFont, bg="red", activebackground="red", fg="white", activeforeground="white", command=emergency_stop, width=100, height=100)
+stop_button.pack(expand=True)
+stop_button.pack_forget()
+
 window.mainloop()
