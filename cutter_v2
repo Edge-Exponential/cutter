@@ -19,7 +19,7 @@ GPIO.output(4, GPIO.HIGH)  # relay initiation
 GPIO.output(21, GPIO.HIGH)  # relay initiation
 
 # Some global variables for processes
-shutdown = True  # Determines if machine is shutdown
+shutdown = True  # Determines if machine is shutdown | Don't run of shutdown
 
 # screen setup
 window = Tk()
@@ -36,14 +36,17 @@ def killscreen():
 
 # Cut functions
 
-def cut():
+# I think this is what you wanted for the cut function
+# dur is the sleep duration
+def cut(dur):
     print(shutdown)
     if not shutdown:
         GPIO.output(4, GPIO.LOW)
         GPIO.output(21, GPIO.LOW)
-        time.sleep(.20)  # .18
+        time.sleep(dur)  # .18
+        if shutdown: return
         GPIO.output(21, GPIO.HIGH)
-        time.sleep(.21)
+        time.sleep(dur)
         GPIO.output(4, GPIO.HIGH)
 
 
@@ -58,21 +61,24 @@ def clean():
 
 def do_cut(size):
     global shutdown
-    shutdown = False
+    shutdown = False  # Set shutdown to false because running
     print("CUT START")
 
-    stop_button.pack(expand=True)
+    stop_button.pack(expand=True)  # Put stop button on screen
     window.update()
 
-    cut_thread = threading.Thread(target=sizecut, args=(size,))
-    cut_thread.start()
+    cut_thread = threading.Thread(target=sizecut, args=(size,))  # Create new thread for sizecut program
+    cut_thread.start()  # Start thread | New thread is necessary to have stop button working during cut
 
 
+# Change shutdown to true to stop the machine
+# All the cut functions have multiple moments in which they check if they are shutdown or not
+# This is how the stop function works
 def emergency_stop():
     print("STOP")
     global shutdown
     shutdown = True
-    stop_button.pack_forget()
+    stop_button.pack_forget()  # Remove stop button from screen
 
 
 motor_nums = {'1': [13, 26], '2': [20, 19]}
@@ -90,7 +96,7 @@ def motorNum(num, steps):
         else:
             GPIO.output(motor_nums[num][0], GPIO.HIGH)
 
-        while (x < steps) & (not shutdown):
+        while (x < steps) & (not shutdown):  # Constantly checks if it is shutdown
             GPIO.output(motor_nums[num][1], GPIO.LOW)
             time.sleep(motor_time_sleep[1])
             GPIO.output(motor_nums[num][1], GPIO.HIGH)
@@ -98,6 +104,8 @@ def motorNum(num, steps):
             x += 1
 
 
+# The step numbers associated with each cut
+# I took them from the individual functions and put them into the array
 size_nums = {'small': [250, 95, 110, 400, 150, 375],
              'med': [170, 95, 150, 400, 200, 300],
              'large': [150, 105, 180, 400, 220, 360]}
@@ -108,37 +116,37 @@ def sizecut(size):
     global shutdown
     if not shutdown:
         motorNum('2',size_nums[size][0])
-        cut()
-        times = 4 if size == 'small' else 5
+        cut(.18)
+        times = 4 if size == 'small' else 5  # Loop 4 times if small cut, 5 times otherwise
         for i in range(times):
             motorNum('2', size_nums[size][1])
-            cut()
+            cut(.18)
         move1 = threading.Thread(target=motorNum, args=('2',-size_nums[size][2],))
         move1.start()
         motorNum('1',-size_nums[size][3])
         move1.join()
-        cut()
+        cut(.18)
         motorNum('2',-size_nums[size][4])
-        cut()
+        cut(.18)
         move1 = threading.Thread(target=motorNum, args=('2',-size_nums[size][5]))
         move1.start()
         motorNum('1',size_nums[size][3])
         move1.join()
     shutdown = True
-    stop_button.pack_forget()
+    stop_button.pack_forget()  # Remove stop button from screen
     print("CUT END")
 
 
-def do_pie_cut(size):
+def do_pie_cut():
     global shutdown
-    shutdown = False
+    shutdown = False  # Set shutdown to false since running
     print("CUT START")
 
-    stop_button.pack(expand=True)
-    window.update()
+    stop_button.pack(expand=True)  # Make stop button display
+    window.update()  # Update window to display stop button
 
-    cut_thread = threading.Thread(target=piecut)
-    cut_thread.start()
+    cut_thread = threading.Thread(target=piecut)  # Create new thread to run the piecut program
+    cut_thread.start()  # Start thread. Threads are necessary to have stop button running at same time as cut
 
 
 def piecut():
@@ -148,13 +156,13 @@ def piecut():
         move1.start()
         motorNum('1', 400)
         move1.join()
-        cut()
+        cut(.18)
         motorNum('1', -200)
-        cut()
+        cut(.18)
         motorNum('1', -200)
-        cut()
+        cut(.18)
         motorNum('1', -200)
-        cut()
+        cut(.18)
         move2 = threading.Thread(target=motorNum, args=('2',-450,))
         move2.start()
         motorNum('1', 200)
@@ -189,7 +197,7 @@ text10.place(x=309, y=255)
 text07 = Button(window, text="7\"", font=font, bg="black", fg="white", command=lambda: [do_cut('large')], height=5, width=8)
 text07.place(x=623, y=60)
 
-textpiecut = Button(window, text="Pie Cut", font=font, bg="black", fg="white", command=lambda: [piecut()], height=5, width=8)
+textpiecut = Button(window, text="Pie Cut", font=font, bg="black", fg="white", command=lambda: [do_pie_cut()], height=5, width=8)
 textpiecut.place(x=623, y=255)
 
 exitbutton = Button(window, text="EXIT", font=font, bg="red2", fg="white", command=killscreen, height=1, width=7)
