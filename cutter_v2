@@ -182,25 +182,25 @@ longtext = """
 14\"
 Half & Half
 """
-text14 = Button(window, text="14\"", font=font, bg="black", fg="white", command=lambda: [do_cut('large')], height=5, width=8)
+text14 = Button(window, text="14\"", font=font, bg="black", activebackground="black", fg="white", command=lambda: [do_cut('large')], height=5, width=8)
 text14.place(x=5, y=60)
 
-text14hh = Button(window, text=longtext, font=font, bg="black", fg="white", command=lambda: [do_cut('large')], height=5, width=8)
+text14hh = Button(window, text=longtext, font=font, bg="black", activebackground="black", fg="white", command=lambda: [do_cut('large')], height=5, width=8)
 text14hh.place(x=5, y=255)
 
-text12 = Button(window, text="12\"", font=font, bg="black", fg="white", command=lambda: [do_cut('med')], height=5, width=8)
+text12 = Button(window, text="12\"", font=font, bg="black", activebackground="black", fg="white", command=lambda: [do_cut('med')], height=5, width=8)
 text12.place(x=309, y=60)
 
-text10 = Button(window, text="10\"", font=font, bg="black", fg="white", command=lambda: [do_cut('small')], height=5, width=8)
+text10 = Button(window, text="10\"", font=font, bg="black", activebackground="black", fg="white", command=lambda: [do_cut('small')], height=5, width=8)
 text10.place(x=309, y=255)
 
-text07 = Button(window, text="7\"", font=font, bg="black", fg="white", command=lambda: [do_cut('large')], height=5, width=8)
+text07 = Button(window, text="7\"", font=font, bg="black", activebackground="black", fg="white", command=lambda: [do_cut('large')], height=5, width=8)
 text07.place(x=623, y=60)
 
-textpiecut = Button(window, text="Pie Cut", font=font, bg="black", fg="white", command=lambda: [do_pie_cut()], height=5, width=8)
+textpiecut = Button(window, text="Pie Cut", font=font, bg="black", activebackground="black", fg="white", command=lambda: [do_pie_cut()], height=5, width=8)
 textpiecut.place(x=623, y=255)
 
-exitbutton = Button(window, text="EXIT", font=font, bg="red2", fg="white", command=killscreen, height=1, width=7)
+exitbutton = Button(window, text="EXIT", font=font, bg="red2", activebackground="red2", fg="white", command=killscreen, height=1, width=7)
 exitbutton.place(x=639, y=430)
 
 stop_button = Button(window, text="STOP", font=stopFont, bg="red", activebackground="red", fg="white", activeforeground="white", command=emergency_stop, width=100, height=100)
