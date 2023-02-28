@@ -38,11 +38,11 @@ main_bg = "#FFFFFF"
 
 # Screen set up
 screen = Tk()
-# screen.overrideredirect(1)
+screen.overrideredirect(1)
 screen.geometry('800x480')
 screen.configure(bg=main_bg)
 screen.title("Sm^rt Cutter")
-# screen.config(cursor="none")
+screen.config(cursor="none")
 
 title_font = ('Helvetica', 12)
 other_font = ('Helvetica', 20)
