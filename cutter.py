@@ -1,72 +1,92 @@
 _version='b.6.0'
-import RPi.GPIO as GPIO
+# import RPi.GPIO as GPIO
+import json
 import time
 import threading
-import stepper
+# import stepper
 from tkinter import *
 import tkinter.ttk as ttk
 import tkinter.font as font
 
-GPIO.setmode(GPIO.BCM)
-GPIO.setwarnings(False)
-GPIO.setup(17,GPIO.IN,pull_up_down=GPIO.PUD_UP) #limit switch
-GPIO.setup(4, GPIO.OUT) #power to linear actuator
-GPIO.setup(21, GPIO.OUT) #Direction to linear actuator
-GPIO.output(4, GPIO.HIGH)#relay initiation
-GPIO.output(21, GPIO.HIGH) #relay initiation
-m1=stepper.motor(26,13) #turntable
-m2=stepper.motor(19,20) #gantry
+# GPIO.setmode(GPIO.BCM)
+# GPIO.setwarnings(False)
+# GPIO.setup(17,GPIO.IN,pull_up_down=GPIO.PUD_UP) #limit switch
+# GPIO.setup(4, GPIO.OUT) #power to linear actuator
+# GPIO.setup(21, GPIO.OUT) #Direction to linear actuator
+# GPIO.output(4, GPIO.HIGH)#relay initiation
+# GPIO.output(21, GPIO.HIGH) #relay initiation
+# m1=stepper.motor(26,13) #turntable
+# m2=stepper.motor(19,20) #gantry
 
 m1_ratio=1600 #steps per rev
 m2_ratio=-800/3.75 #steps per inch 
 
 shutdown=True
 
+filepath = '/home/pi/Documents/CutterCode/'
+
 #default info file
 #7.2" to center
-info={7:[5.5,1.75,1.75,-1.75],
-      10:[4.2,1.6,1.6,1.7,-1.08,-2.50],
-      12:[3.2,2,2,2,2,-2.5,-3.0],
-      14:[2.5,2,2,2,2,2,-3.0,-3.5],
-      'cutdepth':18,
-      'cut1':[None,7.2,5.5,4.2,3.2,2.5],
-      'cutwidth':[None,None,1.75,1.65,2,2],
-      'rotpercent':[None,13,25,25,25,25],
-      'cutn1':[None,None,1.7,1.7,2.5,3],
-      'cutn2':[None,None,None,2.5,3,3.5]
-      }
+
+
+count = { 'pie': 0, 7: 0, 10: 0, 12: 0, 14: 0 }
+
+def read_info_file():
+    global info
+    try:
+        with open(filepath + 'info.json', 'r') as reader:
+            info = json.load(reader)
+    except FileNotFoundError:
+        info={
+            7:[5.5,1.75,1.75,-1.75],
+            10:[4.2,1.6,1.6,1.7,-1.08,-2.50],
+            12:[3.2,2,2,2,2,-2.5,-3.0],
+            14:[2.5,2,2,2,2,2,-3.0,-3.5],
+            'cutdepth':18,
+            'cut1':[None,7.2,5.5,4.2,3.2,2.5],
+            'cutwidth':[None,None,1.75,1.65,2,2],
+            'rotpercent':[None,13,25,25,25,25],
+            'cutn1':[None,None,1.7,1.7,2.5,3],
+            'cutn2':[None,None,None,2.5,3,3.5]
+        }
+
+read_info_file()
+
+def write_info_file():
+    with open(filepath + 'info.json', 'w+') as writer:
+        json.dump(info, writer)
 
 def killscreen():
     window.destroy()
 def stop():
     global shutdown
     shutdown=True
-    m1.stop()
-    m2.stop()
+    # m1.stop()
+    # m2.stop()
 def home():
     global shutdown
     shutdown=False
-    GPIO.output(4, GPIO.LOW)
-    GPIO.output(21, GPIO.HIGH)
-    if GPIO.input(17):
-        m2.ramp(-10*m2_ratio,.1)
-    while GPIO.input(17):
-        if shutdown:
-            stop()
-            return
-        time.sleep(.05)
-    m2.stop()
-    GPIO.output(4, GPIO.HIGH)
+    # GPIO.output(4, GPIO.LOW)
+    # GPIO.output(21, GPIO.HIGH)
+    # if GPIO.input(17):
+    #     m2.ramp(-10*m2_ratio,.1)
+    # while GPIO.input(17):
+    #     if shutdown:
+    #         stop()
+    #         return
+    #     time.sleep(.05)
+    # m2.stop()
+    # GPIO.output(4, GPIO.HIGH)
     
 def cut(t_cut=0):
     if t_cut<=0 or t_cut>=.5:
         t_cut=info['cutdepth']/100
-    GPIO.output(21, GPIO.LOW)
-    GPIO.output(4, GPIO.LOW) #go
-    time.sleep(t_cut) #down duration/distance
-    GPIO.output(21, GPIO.HIGH)
-    time.sleep(t_cut+.02) #up duration/distance (hit limit switch)
-    GPIO.output(4, GPIO.HIGH) #stop
+    # GPIO.output(21, GPIO.LOW)
+    # GPIO.output(4, GPIO.LOW) #go
+    # time.sleep(t_cut) #down duration/distance
+    # GPIO.output(21, GPIO.HIGH)
+    # time.sleep(t_cut+.02) #up duration/distance (hit limit switch)
+    # GPIO.output(4, GPIO.HIGH) #stop
     
 def clean():
 #     GPIO.output(21, GPIO.HIGH)
@@ -97,16 +117,16 @@ def partycut_thread(size,speed=12800,ramp=.1):
     #run machine
     for i in [j for j in cut_array if j>0]:
         if shutdown: return
-        m2.accel(i*m2_ratio,speed,ramp)
+        # m2.accel(i*m2_ratio,speed,ramp)
         if shutdown: return
         cut_thread=threading.Thread(target=cut)
         cut_thread.start()
         time.sleep(info['cutdepth']/100*1.2)
-    rotate = threading.Thread(target=m1.accel, args=(-m1_ratio*info['rotpercent'][size]/100,speed/2,ramp*5,))
+    # rotate = threading.Thread(target=m1.accel, args=(-m1_ratio*info['rotpercent'][size]/100,speed/2,ramp*5,))
     rotate.start()
     for i in [j for j in cut_array if j<0]:
         if shutdown: return
-        m2.accel(i*m2_ratio,speed,ramp)
+        # m2.accel(i*m2_ratio,speed,ramp)
         rotate.join()
         if shutdown: return
         cut_thread=threading.Thread(target=cut)
@@ -114,7 +134,7 @@ def partycut_thread(size,speed=12800,ramp=.1):
         time.sleep(info['cutdepth']/100*1.2)
     time.sleep(info['cutdepth']/100*.8)
     if shutdown: return
-    rotate = threading.Thread(target=m1.accel, args=(m1_ratio*info['rotpercent'][size]/100,speed/4,ramp*5,))
+    # rotate = threading.Thread(target=m1.accel, args=(m1_ratio*info['rotpercent'][size]/100,speed/4,ramp*5,))
     rotate.start()
     if shutdown: return
     cut_thread.join()
@@ -133,28 +153,28 @@ def piecut_thread(speed,ramp):
     global shutdown
     shutdown=False
     home
-    move1 = threading.Thread(target=m2.accel, args=(info['cut1'][1]*m2_ratio,speed,ramp,))
-    move1.start()
+    # move1 = threading.Thread(target=m2.accel, args=(info['cut1'][1]*m2_ratio,speed,ramp,))
+    # move1.start()
     if shutdown: return
-    m1.accel(m1_ratio*info['rotpercent'][1]/50,speed/3,ramp*3)
+    # m1.accel(m1_ratio*info['rotpercent'][1]/50,speed/3,ramp*3)
     if shutdown: return
-    move1.join()
+    # move1.join()
     cut_thread=threading.Thread(target=cut)
     cut_thread.start()
     time.sleep(info['cutdepth']/50-.05)
     for i in [1,2,3]:
         if shutdown: return
-        m1.accel(-m1_ratio*info['rotpercent'][1]/100,speed/3,ramp*3)
+        # m1.accel(-m1_ratio*info['rotpercent'][1]/100,speed/3,ramp*3)
         if shutdown: return
         cut_thread=threading.Thread(target=cut)
         cut_thread.start()
         time.sleep(info['cutdepth']/50-.05)
     cut_thread.join()
     if shutdown: return
-    move1 = threading.Thread(target=m2.accel, args=(-info['cut1'][1]*m2_ratio,speed,ramp,))
-    move1.start()
-    m1.accel(m1_ratio*info['rotpercent'][1]/100,speed/3,ramp*3)
-    move1.join()
+    # move1 = threading.Thread(target=m2.accel, args=(-info['cut1'][1]*m2_ratio,speed,ramp,))
+    # move1.start()
+    # m1.accel(m1_ratio*info['rotpercent'][1]/100,speed/3,ramp*3)
+    # move1.join()
     move2 = threading.Thread(target=home)
     move2.start()
     if shutdown: return
@@ -248,7 +268,7 @@ bold=font.Font(family='Helvetica', size=50, weight='bold')
 font=font.Font(family='Helvetica', size=24, weight='normal')
 window.overrideredirect(1)
 window.geometry('800x480')
-window.config(cursor=NONE)
+# window.config(cursor=NONE)
 window.title("Sm^rt Cutter")
 Label(window, text="S M ^ R T   C U T T E R").pack(pady=5,side=TOP)
 Label(window, text="SM^RT Cutter | version "+_version+"\t\t\t\t\t\t Ag\u00e1pe Automation 2023").pack(side=BOTTOM)
