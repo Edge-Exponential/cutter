@@ -23,7 +23,8 @@ m2_ratio=-800/3.75 #steps per inch
 
 shutdown=True
 
-filepath = '/home/pi/Documents/CutterCode/'
+filepath = '/Users/InkAl/OneDrive/Desktop/cutter/'
+#filepath = '/home/pi/Documents/CutterCode/'
 
 #default info file
 #7.2" to center
@@ -34,8 +35,7 @@ count = { 'pie': 0, 7: 0, 10: 0, 12: 0, 14: 0 }
 def read_info_file():
     global info
     try:
-        with open(filepath + 'info.json', 'r') as reader:
-            info = json.load(reader)
+        with open(filepath + 'info.json', 'r') as reader: info = json.load(reader)
     except FileNotFoundError:
         info={
             7:[5.5,1.75,1.75,-1.75],
@@ -53,8 +53,8 @@ def read_info_file():
 read_info_file()
 
 def write_info_file():
-    with open(filepath + 'info.json', 'w+') as writer:
-        json.dump(info, writer)
+    global info
+    with open(filepath + 'info.json', 'w+') as writer: json.dump(info, writer)
 
 def killscreen():
     window.destroy()
@@ -262,6 +262,7 @@ def settingsscreen():
             info['cutwidth'][i]=cutwidth[i].get()
             info['cutn1'][i]=cutn1[i].get()
             if i!=2: info['cutn2'][i]=cutn2[i].get()
+        write_info_file()
             
 window=Tk()
 bold=font.Font(family='Helvetica', size=50, weight='bold')
