@@ -1,5 +1,6 @@
 _version='b.6.0'
 import RPi.GPIO as GPIO
+import json
 import time
 import threading
 import stepper
@@ -22,19 +23,37 @@ m2_ratio=-800/3.75 #steps per inch
 
 shutdown=True
 
-#default config file
+filepath = '/home/pi/Documents/CutterCode/'
+
+#default info file
 #7.2" to center
-info={7:[5.5,1.75,1.75,-1.75],
-      10:[4.2,1.6,1.6,1.7,-1.08,-2.50],
-      12:[3.2,2,2,2,2,-2.5,-3.0],
-      14:[2.5,2,2,2,2,2,-3.0,-3.5],
-      'cutdepth':18,
-      'cut1':[None,7.2,5.5,4.2,3.2,2.5],
-      'cutwidth':[None,None,1.75,1.65,2,2],
-      'rotpercent':[None,13,25,25,25,25],
-      'cutn1':[None,None,1.7,1.7,2.5,3],
-      'cutn2':[None,None,None,2.5,3,3.5]
-      }
+
+
+count = { 'pie': 0, 7: 0, 10: 0, 12: 0, 14: 0 }
+
+def read_info_file():
+    global info
+    try:
+        with open(filepath + 'info.json', 'r') as reader: info = json.load(reader)
+    except FileNotFoundError:
+        info={
+            7:[5.5,1.75,1.75,-1.75],
+            10:[4.2,1.6,1.6,1.7,-1.08,-2.50],
+            12:[3.2,2,2,2,2,-2.5,-3.0],
+            14:[2.5,2,2,2,2,2,-3.0,-3.5],
+            'cutdepth':18,
+            'cut1':[None,7.2,5.5,4.2,3.2,2.5],
+            'cutwidth':[None,None,1.75,1.65,2,2],
+            'rotpercent':[None,13,25,25,25,25],
+            'cutn1':[None,None,1.7,1.7,2.5,3],
+            'cutn2':[None,None,None,2.5,3,3.5]
+        }
+
+read_info_file()
+
+def write_info_file():
+    global info
+    with open(filepath + 'info.json', 'w+') as writer: json.dump(info, writer)
 
 def killscreen():
     window.destroy()
@@ -69,8 +88,8 @@ def cut(t_cut=0):
     GPIO.output(4, GPIO.HIGH) #stop
     
 def clean():
-#     GPIO.output(21, GPIO.HIGH)
-#     GPIO.output(4, GPIO.HIGH)
+    GPIO.output(21, GPIO.HIGH)
+    GPIO.output(4, GPIO.HIGH)
     pass
 
 def partycut(size):
@@ -120,7 +139,7 @@ def partycut_thread(size,speed=12800,ramp=.1):
     cut_thread.join()
     home()
     rotate.join()
-    #clean()
+    clean()
     shutdown=True
     timer=round(time.time()-timer,2)
     time_label.config(text=str(timer)+' seconds')
@@ -159,7 +178,7 @@ def piecut_thread(speed,ramp):
     move2.start()
     if shutdown: return
     move2.join()
-    #clean()
+    clean()
     shutdown=True
     timer=round(time.time()-timer,2)
     time_label.config(text=str(timer)+' seconds')
@@ -242,6 +261,7 @@ def settingsscreen():
             info['cutwidth'][i]=cutwidth[i].get()
             info['cutn1'][i]=cutn1[i].get()
             if i!=2: info['cutn2'][i]=cutn2[i].get()
+        write_info_file()
             
 window=Tk()
 bold=font.Font(family='Helvetica', size=50, weight='bold')
