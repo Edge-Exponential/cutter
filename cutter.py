@@ -22,7 +22,7 @@ m2_ratio=-800/3.75 #steps per inch
 
 shutdown=True
 
-#default info file
+#default config file
 #7.2" to center
 info={7:[5.5,1.75,1.75,-1.75],
       10:[4.2,1.6,1.6,1.7,-1.08,-2.50],
@@ -259,15 +259,15 @@ time_label.place(x=350,y=458)
 
 frame1=Frame(window,borderwidth=8,relief=SUNKEN)
 frame1.pack(pady=10,side=TOP)
-text14=Button(frame1, text='\u25cd\n14"',font=bold,bg="green",fg="white",command=lambda:partycut(14),height=3,width=3,activebackground='green',activeforeground='white')
+text14=Button(frame1, text='\u25cd\n14"',font=bold,bg="green",fg="white",command=lambda:partycut(14),height=3,width=3,activebackground='lime green',activeforeground='white')
 text14.pack(side=RIGHT)
-text12=Button(frame1, text='\u25cd\n12"',font=bold,bg="green",fg="white",command=lambda:partycut(12),height=3,width=3,activebackground='green',activeforeground='white')
+text12=Button(frame1, text='\u25cd\n12"',font=bold,bg="green",fg="white",command=lambda:partycut(12),height=3,width=3,activebackground='lime green',activeforeground='white')
 text12.pack(side=RIGHT)
-text10=Button(frame1, text='\u25cd\n10"',font=bold,bg="green",fg="white",command=lambda:partycut(10),height=3,width=3,activebackground='green',activeforeground='white')
+text10=Button(frame1, text='\u25cd\n10"',font=bold,bg="green",fg="white",command=lambda:partycut(10),height=3,width=3,activebackground='lime green',activeforeground='white')
 text10.pack(side=RIGHT)
-text07=Button(frame1, text='\u25cd\n7"',font=bold,bg="green",fg="white",command=lambda:partycut(7),height=3,width=3,activebackground='green',activeforeground='white')
+text07=Button(frame1, text='\u25cd\n7"',font=bold,bg="green",fg="white",command=lambda:partycut(7),height=3,width=3,activebackground='lime green',activeforeground='white')
 text07.pack(side=RIGHT)
-textpiecut=Button(frame1, text="\u2733\nPIE", font=bold, bg="green", fg="white", command=piecut,height=3,width=3,activebackground='green',activeforeground='white')
+textpiecut=Button(frame1, text="\u2733\nPIE", font=bold, bg="green", fg="white", command=piecut,height=3,width=3,activebackground='lime green',activeforeground='white')
 textpiecut.pack(side=LEFT)
 
 frame2=Frame(window,borderwidth=8,relief=SUNKEN)
