@@ -1,302 +1,1656 @@
-_version='b.6.0'
-import RPi.GPIO as GPIO
+import os
 import json
-import time
+import tkinter
+import subprocess
+from PIL import Image
+from PIL import ImageDraw
+import PIL.Image
+import PIL.ImageTk
+import pyfireconnect
+import RPi.GPIO as GPIO
+import serial
+import sys
 import threading
-import stepper
+from threading import Thread
+import time
 from tkinter import *
-import tkinter.ttk as ttk
+from tkinter import ttk
 import tkinter.font as font
-
-GPIO.setmode(GPIO.BCM)
-GPIO.setwarnings(False)
-GPIO.setup(17,GPIO.IN,pull_up_down=GPIO.PUD_UP) #limit switch
-GPIO.setup(4, GPIO.OUT) #power to linear actuator
-GPIO.setup(21, GPIO.OUT) #Direction to linear actuator
-GPIO.output(4, GPIO.HIGH)#relay initiation
-GPIO.output(21, GPIO.HIGH) #relay initiation
-m1=stepper.motor(26,13) #turntable
-m2=stepper.motor(19,20) #gantry
-
-m1_ratio=1600 #steps per rev
-m2_ratio=-800/3.75 #steps per inch 
-
-shutdown=True
-
-filepath = '/home/pi/Documents/CutterCode/'
-
-#default info file
-#7.2" to center
+import urllib.request
+import multiprocessing
 
 
-count = { 'pie': 0, 7: 0, 10: 0, 12: 0, 14: 0 }
+#GROTECONNECT
+import zmq
+import datetime
+import psycopg2
+import psycopg2.extras
+from uuid import getnode as get_mac
+import fcntl, socket, struct
 
-def read_info_file():
-    global info
+from smart.delegator import delegator
+from smart.delegator import getGeoSensorAttribute
+from smart.delegator import updateGeoSensorAttribute
+from smart.delegator import incrementGeoSensorAttributeLocal
+from smart.delegator import setCurrentGeoSensorAttributeLocal
+
+# Sm^rt Cutter Software
+_version = '1.0.0'
+_iiotd_version = '1193'
+_update = '2023-05-24'
+_hardware = 'Touch'
+_location = 'Orange'
+_power = True
+
+p_conn = None  # psql connection
+i_mac = None  # the interface MAC used as identification of this GroteNode
+
+context_zmq = zmq.Context()
+socket_zmq = context_zmq.socket(zmq.PUB)
+print("socket created")
+# this stopped working: zmq.error.ZMQError: Address already in use
+#socket_zmq.bind("tcp://127.0.0.1:5680")
+#print("socket connected")
+
+
+#initial saucer mac needs to be like..... DCA6324738780400
+def getHwAddr(ifname):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    info = fcntl.ioctl(s.fileno(), 0x8927,  struct.pack('256s', bytes(ifname, 'utf-8')[:15]))
+    # return ':'.join('%02X' % b for b in info[18:24])
+    # return '{0:02X}'.format(b for b in info[18:24]).join('0400')
+    return f"{info[18]:02X}" + f"{info[19]:02X}" + f"{info[20]:02X}" + f"{info[21]:02X}" + f"{info[22]:02X}" + f"{info[23]:02X}" + f"{4:02X}" + f"{0:02X}"
+
+
+def getserial():
+    # Extract serial from cpuinfo file
+    cpuserial = "0000000000000000"
     try:
-        with open(filepath + 'info.json', 'r') as reader: info = json.load(reader)
-    except FileNotFoundError:
-        info={
-            7:[5.5,1.75,1.75,-1.75],
-            10:[4.2,1.6,1.6,1.7,-1.08,-2.50],
-            12:[3.2,2,2,2,2,-2.5,-3.0],
-            14:[2.5,2,2,2,2,2,-3.0,-3.5],
-            'cutdepth':18,
-            'cut1':[None,7.2,5.5,4.2,3.2,2.5],
-            'cutwidth':[None,None,1.75,1.65,2,2],
-            'rotpercent':[None,13,25,25,25,25],
-            'cutn1':[None,None,1.7,1.7,2.5,3],
-            'cutn2':[None,None,None,2.5,3,3.5]
-        }
+        f = open('/proc/cpuinfo', 'r')
+        for line in f:
+            if line[0:6]=='Serial':
+                cpuserial = line[10:26]
+        f.close()
+    except:
+        cpuserial = "ERROR000000000"
 
-read_info_file()
+    return cpuserial.upper()
 
-def write_info_file():
-    global info
-    with open(filepath + 'info.json', 'w+') as writer: json.dump(info, writer)
 
-def killscreen():
-    window.destroy()
-def stop():
+filepath = '/usr/data/donatos/'
+
+if os.environ.get('DISPLAY', '') == '':
+    print('no display found. Using :0.0')
+    os.environ.__setitem__('DISPLAY', ':0.0')
+
+if i_mac is None or "00:00:00:00:00:00":
+    try:
+        i_mac = getserial()
+    except:
+        i_mac = "00:00:00:00:00:00"
+        print("ERROR: MAC of eth0 [" + i_mac + "]")
+    finally:
+        print("MAC of eth0 [" + str(i_mac) + "]")
+
+
+def delegator():
+    """ Connect to the PostgreSQL database server """
+    global p_conn
+    global i_mac
+
+    if p_conn is None or p_conn.closed:
+        try:
+            # connect to the PostgreSQL server
+            # conn.cursor will return a cursor object, you can use this query to perform queries
+            # note that in this example we pass a cursor_factory argument that will
+            # dictionary cursor so COLUMNS will be returned as a dictionary so we
+            # can access columns by their name instead of index.
+            # print('Connecting to the PostgreSQL database...')
+            p_conn = psycopg2.connect(
+                host="127.0.0.1",
+                port="5432",
+                database="groteconnect",
+                user="groteconnect",
+                password="D0WhutdGateway",
+                cursor_factory=psycopg2.extras.DictCursor)
+
+
+            # create a cursor
+            # cur = p_conn.cursor()
+
+            # execute a statement
+            # print('PostgreSQL database version:')
+            # cur.execute('SELECT version()')
+
+            # display the PostgreSQL database server version
+            # db_version = cur.fetchone()
+            # print(db_version)
+
+            # close the communication with the PostgreSQL
+            # cur.close()
+        except (Exception, psycopg2.DatabaseError) as error:
+            print(error)
+            print('DBMS ERROR Connecting to the PostgreSQL database...')
+        # finally:
+        #     if p_conn is not None:
+        #         # conn.close()
+        #         print('Database connection is open.')
+    return p_conn
+
+
+
+
+#         ######################## CUTTER_ON is the HEART_BEAT of the python code ##################
+
+class Heartbeat(Thread):
+    def __init__(self):
+        Thread.__init__(self)
+        self.running = True
+        #resets the the current count to 0, but allows the lifetime to continue incrementing
+        setCurrentGeoSensorAttributeLocal("CUTTER_ON",0,1)
+
+    def run(self):
+        while self.running:
+            # using now() to get current time
+            now = datetime.datetime.now()
+
+            #starts incrementing the 5 minute intervals unit is on
+            incrementGeoSensorAttributeLocal("CUTTER_ON",1,1)
+            print(now.strftime("%Y-%m-%d %H:%M:%S") + ': CUTTER_ON pulse created')
+            time.sleep(300) # 5 minute delay
+    def stop(self):
+        #resets the the current count to 0, but allows the lifetime to continue incrementing
+        setCurrentGeoSensorAttributeLocal("CUTTER_ON",0,1)
+        self.running = False
+
+pulse = Heartbeat()
+pulse.start()
+
+def check_internet():
+    internet = False
+
+    import urllib
+    from urllib import request
+    try:
+        urllib.request.urlopen('http://google.com',timeout=5)
+        # If you want you can add the timeout parameter to filter slower connections. i.e. urllib.request.urlopen('http://google.com', timeout=5)
+        internet = True
+    except:
+        internet = False
+    return internet
+
+
+# Set timezone
+os.environ['TZ'] = 'US/Eastern'
+
+
+#!GROTECONNECT
+
+
+# *************************************START CONNECTION**************************************
+
+# Open UART serial connection
+
+#ser = serial.Serial("/dev/ttyS0", 115200)  # opens port with baud rate
+try: #connect to MC and define serial comm functions
+    ser = serial.Serial("/dev/ttyS0",115200,writeTimeout=3)
+except:
+    print('SERIAL ERROR')
+
+
+
+
+
+# ***********************************VARIABLE DECLARATIONS***********************************
+
+# Color variables for consistency
+main_bg = "#FFFFFF"  # switched from gray20
+second_bg = "#CCCDD0"
+button_color = "#CCCDD0"  # switched from gray20
+dough_color = "#EFE4B0"
+donatos_path = filepath + "tenant_logo.png"  # switched from white
+main_fg = "#000000"  # switched from FFFFFF
+
+# Variables for emergency stop
+global shutdown
+shutdown = False
+global running
+running = False
+global currentScreen
+GPIO.setmode(GPIO.BCM)
+
+# *************************************BUTTON FUNCTIONS**************************************
+def set_size(button, new_size):
+    global size
+    size = new_size
+    # run_saucer(button, set_active)
+    run_cut(size)
+    
+def freeze_all_motor_function():
+    ser.write(('$STEPPER_STOP,PUMP1\r\n').encode())
+    ser.write(('$STEPPER_STOP,PUMP2\r\n').encode())
+    ser.write(('$STEPPER_STOP,PUMP3\r\n').encode())
+    ser.write(('$STEPPER_STOP,PUMP4\r\n').encode())
+    ser.write(('$STEPPER_STOP,TURNTABLE\r\n').encode())
+    
+    #Move actators up
+    up()
+
+def emergency_stop():
     global shutdown
-    shutdown=True
-    m1.stop()
-    m2.stop()
+    shutdown = True
+    set_color("lime green")
+    #GROTECONNECT
+    incrementGeoSensorAttributeLocal("CUTTER_STOP",1,1)
+    freeze_all_motor_function()
+    # incrementGeoSensorAttributeLocal("VIDEO_STOP",1,1)
+    # socket_zmq.send_string("VIDEO_STOP")
+
+    #!GROTECONNECT
+
+
+
+def kill_two_screens(screen1, screen2):
+    screen2.destroy()
+    screen1.destroy()
+
+# ************************************CUTTER GLOBALS***************************************
+#RPI Pin Declarations
+R_EN = 23
+L_EN = 24
+RPWM = 12
+LPWM = 7
+DOOR1 = 16
+DOOR2 = 22
+HOME = 21
+
+#RPI Pin Setup
+GPIO.setup(R_EN, GPIO.OUT)
+GPIO.setup(L_EN, GPIO.OUT)
+GPIO.setup(RPWM, GPIO.OUT)
+GPIO.setup(LPWM, GPIO.OUT)
+GPIO.setup(DOOR1, GPIO.IN)
+GPIO.setup(DOOR2, GPIO.IN)
+GPIO.setup(HOME, GPIO.IN,pull_up_down=GPIO.PUD_UP)
+
+# Variables for cut spacing
+global first_cut_dist
+global thin_cut_spc
+global wide_cut_spc
+global last_cut_dist
+
+global thin_cut_delay
+global wide_cut_delay
+global first_cut_delay
+
+# ************************************CUTTER FUNCTIONS***************************************
+GPIO.output(L_EN, True)
+GPIO.output(R_EN, True)
+rpwm = GPIO.PWM(RPWM, 100)
+GPIO.output(R_EN, True)
+GPIO.output(L_EN, True)
+lpwm = GPIO.PWM(LPWM, 100)
+    
+def up():
+    rpwm.ChangeDutyCycle(0)
+    rpwm.start(0)
+
+    rpwm.ChangeDutyCycle(100)
+    time.sleep(0.5)
+    rpwm.ChangeDutyCycle(0)
+def down():
+    lpwm.ChangeDutyCycle(0)
+    lpwm.start(0)
+
+    lpwm.ChangeDutyCycle(100)
+    time.sleep(0.4)
+    lpwm.ChangeDutyCycle(0)
+
+def turntable(steps):
+    ser.write(('$STEPPER_START,TURNTABLE,FORWARD,1500,'+str(steps)+'\r\n').encode())
+
+def turntableREV(steps):
+    ser.write(('$STEPPER_START,TURNTABLE,REVERSE,1500,'+str(steps)+'\r\n').encode())
+
+def gantry(steps):
+    ser.write(('$STEPPER_START,PUMP4,FORWARD,800,'+str(steps)+'\r\n').encode())
+
+def gantryREV(steps):
+    ser.write(('$STEPPER_START,PUMP4,REVERSE,800,'+str(steps)+'\r\n').encode())
+
 def home():
+    up()
+    ser.write(('$STEPPER_GOTO,PUMP4,0,800\r\n').encode())
+    elapsed=0
+    while True:
+        time.sleep(0.1)
+        elapsed+=0.1
+        if .95<elapsed<1.05: #timeout, creep towards home
+            ser.write(('$STEPPER_START,PUMP4,REVERSE,65000,0\r\n').encode())
+        if GPIO.input(HOME): #if switch pressed, stop and set 0 pos
+            ser.write(('$STEPPER_STOP,PUMP4\r\n').encode())
+            ser.write(('$STEPPER_SET_HOME_REF,PUMP4\r\n').encode())
+            break
+        
+        
+
+def readDoor():
+    for i in range(0, 1000):
+        if(GPIO.input(DOOR1) == False):
+            print("Door1 Closed")
+        else:
+            print("Door1 Open")
+
+        if(GPIO.input(DOOR2) == False):
+            print("Door2 Closed")
+        else:
+            print("Door2 Open")
+        time.sleep(0.2)
+#readDoor()
+class LockOut(Thread):
+    def __init__(self):
+        Thread.__init__(self)
+        self.running = True
+        #resets the the current count to 0, but allows the lifetime to continue incrementing
+        # setCurrentGeoSensorAttributeLocal("CUTTER_ON",0,1)
+        #going to test it on LPWM first, then switch back to DOOR1 once things working
+        # self.lockout = GPIO.input(DOOR1)
+        self.lockout = GPIO.input(DOOR1)
+
+    def run(self):
+        while self.running:
+            # using now() to get current time
+            now = datetime.datetime.now()
+
+            #starts incrementing the 5 minute intervals unit is on
+            # /incrementGeoSensorAttributeLocal("CUTTER_ON",1,1)
+            if(GPIO.input(DOOR1) != self.lockout):
+            #     # print("No change in door")
+            # else:
+                self.lockout = GPIO.input(DOOR1)
+                print("Door one changed")
+                print(now.strftime("%Y-%m-%d %H:%M:%S") + ': door position changed')
+                setCurrentGeoSensorAttributeLocal("CUTTER_DOOR_1",1,GPIO.input(DOOR1)) #using the value_current ==1 to indicate "true", will flip it at the end
+
+        time.sleep(3) # 3 seconds delay
+    def stop(self):
+        #resets the the current count to 0, but allows the lifetime to continue incrementing
+        # setCurrentGeoSensorAttributeLocal("CUTTER_ON",0,1)
+        self.running = False
+
+tagOut = LockOut()
+tagOut.start()
+
+
+
+# **************************************RUN SIZE FUNCTIONS**************************************
+
+        
+def start_cut(sz):
     global shutdown
-    shutdown=False
-    GPIO.output(4, GPIO.LOW)
-    GPIO.output(21, GPIO.HIGH)
-    if GPIO.input(17):
-        m2.ramp(-10*m2_ratio,.1)
-    while GPIO.input(17):
-        if shutdown:
-            stop()
-            return
-        time.sleep(.05)
-    m2.stop()
-    GPIO.output(4, GPIO.HIGH)
     
-def cut(t_cut=0):
-    if t_cut<=0 or t_cut>=.5:
-        t_cut=info['cutdepth']/100
-    GPIO.output(21, GPIO.LOW)
-    GPIO.output(4, GPIO.LOW) #go
-    time.sleep(t_cut) #down duration/distance
-    GPIO.output(21, GPIO.HIGH)
-    time.sleep(t_cut+.02) #up duration/distance (hit limit switch)
-    GPIO.output(4, GPIO.HIGH) #stop
+    run_process = multiprocessing.Process(target=run_cut, args=(sz,))
+    run_process.start()
     
-def clean():
-    GPIO.output(21, GPIO.HIGH)
-    GPIO.output(4, GPIO.HIGH)
-    pass
-
-def partycut(size):
-    cut_program=threading.Thread(target=partycut_thread,args=(size,))
-    cut_program.start()
-def partycut_thread(size,speed=12800,ramp=.1):
-    timer=time.time()
-    global shutdown
-    shutdown=False
-    home()
-    
-    #create cut array
-    num_cuts={7:2,10:4,12:4,14:5}
-    num_cuts=num_cuts[size]
-    sz_index={7:2,10:3,12:4,14:5}
-    size=sz_index[size]
-    cut_array=[info['cut1'][size]]
-    for j in range(num_cuts):
-        cut_array.append(info['cutwidth'][size])
-    cut_array.append(-info['cutn1'][size])
-    if size>2: cut_array.append(-info['cutn2'][size])
-    print(cut_array)
-    
-    #run machine
-    for i in [j for j in cut_array if j>0]:
-        if shutdown: return
-        m2.accel(i*m2_ratio,speed,ramp)
-        if shutdown: return
-        cut_thread=threading.Thread(target=cut)
-        cut_thread.start()
-        time.sleep(info['cutdepth']/100*1.2)
-    rotate = threading.Thread(target=m1.accel, args=(-m1_ratio*info['rotpercent'][size]/100,speed/2,ramp*5,))
-    rotate.start()
-    for i in [j for j in cut_array if j<0]:
-        if shutdown: return
-        m2.accel(i*m2_ratio,speed,ramp)
-        rotate.join()
-        if shutdown: return
-        cut_thread=threading.Thread(target=cut)
-        cut_thread.start()
-        time.sleep(info['cutdepth']/100*1.2)
-    time.sleep(info['cutdepth']/100*.8)
-    if shutdown: return
-    rotate = threading.Thread(target=m1.accel, args=(m1_ratio*info['rotpercent'][size]/100,speed/4,ramp*5,))
-    rotate.start()
-    if shutdown: return
-    cut_thread.join()
-    home()
-    rotate.join()
-    clean()
-    shutdown=True
-    timer=round(time.time()-timer,2)
-    time_label.config(text=str(timer)+' seconds')
-
-def piecut(speed=12800,ramp=.1):
-    cut_program=threading.Thread(target=piecut_thread,args=(speed,ramp,))
-    cut_program.start()
-def piecut_thread(speed,ramp):
-    timer=time.time()
-    global shutdown
-    shutdown=False
-    home
-    move1 = threading.Thread(target=m2.accel, args=(info['cut1'][1]*m2_ratio,speed,ramp,))
-    move1.start()
-    if shutdown: return
-    m1.accel(m1_ratio*info['rotpercent'][1]/50,speed/3,ramp*3)
-    if shutdown: return
-    move1.join()
-    cut_thread=threading.Thread(target=cut)
-    cut_thread.start()
-    time.sleep(info['cutdepth']/50-.05)
-    for i in [1,2,3]:
-        if shutdown: return
-        m1.accel(-m1_ratio*info['rotpercent'][1]/100,speed/3,ramp*3)
-        if shutdown: return
-        cut_thread=threading.Thread(target=cut)
-        cut_thread.start()
-        time.sleep(info['cutdepth']/50-.05)
-    cut_thread.join()
-    if shutdown: return
-    move1 = threading.Thread(target=m2.accel, args=(-info['cut1'][1]*m2_ratio,speed,ramp,))
-    move1.start()
-    m1.accel(m1_ratio*info['rotpercent'][1]/100,speed/3,ramp*3)
-    move1.join()
-    move2 = threading.Thread(target=home)
-    move2.start()
-    if shutdown: return
-    move2.join()
-    clean()
-    shutdown=True
-    timer=round(time.time()-timer,2)
-    time_label.config(text=str(timer)+' seconds')
-#************************************Screen Design***************************************
-#screen setup
-def settingsscreen():
-    setwin=Toplevel(window)
-    setwin.overrideredirect(1)
-    setwin.geometry('800x480')
-    backbutton=Button(setwin, text="\u2b05", font=font, bg="red2", fg="white", command=setwin.destroy)
-    backbutton.place(x=0,y=0)
-    ttk.Style().configure('TNotebook.Tab',font=font)
-    size_tab=ttk.Notebook(setwin)
-    size_tab.pack()
-    tab_name=['General',' Pie ',' 7" ',' 10" ',' 12" ',' 14" ']
-    frame=[]
-    cut1=[]
-    rotpercent=[]
-    cutwidth=[]
-    cutn1=[]
-    cutn2=[]
-    frame=[Frame(size_tab,width=700,height=400),Frame(size_tab),Frame(size_tab),Frame(size_tab),Frame(size_tab),Frame(size_tab)]
-    for i in range(len(tab_name)):
-        frame[i].pack()
-        size_tab.add(frame[i],text=tab_name[i])
-        cut1.append(None)
-        cutwidth.append(None)
-        rotpercent.append(None)
-        cutn1.append(None)
-        cutn2.append(None)
-
-    #General Tab
-    cutdepth=IntVar()
-    cutdepth.set(info['cutdepth'])
-    Label(frame[0],text='Cut Depth',font=font,padx=40).grid(row=0,column=0)
-    Scale(frame[0],variable=cutdepth,orient=HORIZONTAL,length=260,width=35,from_=10,to=30,tickinterval=10).grid(row=0,column=1)
-    
-    #Pie Tab
-    cut1[1]=DoubleVar()
-    cut1[1].set(info['cut1'][1])
-    Label(frame[1],text='Center Dist.',font=font).grid(row=0,column=0)
-    Scale(frame[1],variable=cut1[1],orient=HORIZONTAL,length=260,width=35,from_=6,to=8,tickinterval=1,resolution=.1).grid(row=0,column=1)
-    rotpercent[1]=DoubleVar()
-    rotpercent[1].set(info['rotpercent'][1])
-    Label(frame[1],text='Rotation%',font=font).grid(row=1,column=0)
-    Scale(frame[1],variable=rotpercent[1],orient=HORIZONTAL,length=260,width=35,from_=10,to=15,tickinterval=1,resolution=.5).grid(row=1,column=1)
-
-    #Party Tabs
-    for i in [2,3,4,5]:
-        cut1[i]=DoubleVar()
-        cut1[i].set(info['cut1'][i])
-        Label(frame[i],text='1st Cut\nDist.',font=font).grid(row=0,column=0)
-        Scale(frame[i],variable=cut1[i],orient=HORIZONTAL,length=260,width=35,from_=2,to=6,tickinterval=2,resolution=.25).grid(row=0,column=1)
-        cutwidth[i]=DoubleVar()
-        cutwidth[i].set(info['cutwidth'][i])
-        Label(frame[i],text='Slice\nWidth',font=font).grid(row=1,column=0)
-        Scale(frame[i],variable=cutwidth[i],orient=HORIZONTAL,length=260,width=35,from_=1,to=3,tickinterval=1,resolution=.25).grid(row=1,column=1)
-        rotpercent[i]=IntVar()
-        rotpercent[i].set(info['rotpercent'][i])
-        Label(frame[i],text='Rotation%',font=font).grid(row=2,column=0)
-        Scale(frame[i],variable=rotpercent[i],orient=HORIZONTAL,length=260,width=35,from_=20,to=30,tickinterval=5).grid(row=2,column=1)
-        cutn1[i]=DoubleVar()
-        cutn1[i].set(info['cutn1'][i])
-        Label(frame[i],text='1st Lat.\nCut Dist.',font=font).grid(row=3,column=0)
-        Scale(frame[i],variable=cutn1[i],orient=HORIZONTAL,length=260,width=35,from_=1,to=4,tickinterval=1,resolution=.25).grid(row=3,column=1)
-        if i!=2:        
-            cutn2[i]=DoubleVar()
-            cutn2[i].set(info['cutn2'][i])
-            Label(frame[i],text='2nd Lat.\nCut Dist.',font=font).grid(row=4,column=0)
-            Scale(frame[i],variable=cutn2[i],orient=HORIZONTAL,length=260,width=35,from_=1,to=4,tickinterval=1,resolution=.25).grid(row=4,column=1)
-    
-    backbutton.config(command=lambda:[write_info_dict(),setwin.destroy(),print(info)])
-    
-    def write_info_dict():
-        info['cutdepth']=cutdepth.get()
-        for i in [1,2,3,4,5]:
-            info['cut1'][i]=cut1[i].get()
-            info['rotpercent'][i]=rotpercent[i].get()
-        for i in [2,3,4,5]:
-            info['cutwidth'][i]=cutwidth[i].get()
-            info['cutn1'][i]=cutn1[i].get()
-            if i!=2: info['cutn2'][i]=cutn2[i].get()
-        write_info_file()
+    def check_stop():
+        global shutdown
+        while True:
+            if shutdown == True:
+                run_process.terminate()
+                time.sleep(0.1)
+                freeze_all_motor_function()
+                print("STOPPING**************************************************")
+                shutdown = False
             
-window=Tk()
-bold=font.Font(family='Helvetica', size=50, weight='bold')
-font=font.Font(family='Helvetica', size=24, weight='normal')
-window.overrideredirect(1)
-window.geometry('800x480')
-window.config(cursor=NONE)
-window.title("Sm^rt Cutter")
-Label(window, text="S M ^ R T   C U T T E R").pack(pady=5,side=TOP)
-Label(window, text="SM^RT Cutter | version "+_version+"\t\t\t\t\t\t Ag\u00e1pe Automation 2023").pack(side=BOTTOM)
-Button(window, text="X",font=font,relief=FLAT,activebackground=window['bg'],command=killscreen).place(x=0,y=0)
-Button(window,text="\u2699",font=font,relief=FLAT,activebackground=window['bg'],command=settingsscreen).place(x=750,y=0)
-time_label=Label(window)
-time_label.place(x=350,y=458)
-
-frame1=Frame(window,borderwidth=8,relief=SUNKEN)
-frame1.pack(pady=10,side=TOP)
-text14=Button(frame1, text='\u25cd\n14"',font=bold,bg="green",fg="white",command=lambda:partycut(14),height=3,width=3,activebackground='lime green',activeforeground='white')
-text14.pack(side=RIGHT)
-text12=Button(frame1, text='\u25cd\n12"',font=bold,bg="green",fg="white",command=lambda:partycut(12),height=3,width=3,activebackground='lime green',activeforeground='white')
-text12.pack(side=RIGHT)
-text10=Button(frame1, text='\u25cd\n10"',font=bold,bg="green",fg="white",command=lambda:partycut(10),height=3,width=3,activebackground='lime green',activeforeground='white')
-text10.pack(side=RIGHT)
-text07=Button(frame1, text='\u25cd\n7"',font=bold,bg="green",fg="white",command=lambda:partycut(7),height=3,width=3,activebackground='lime green',activeforeground='white')
-text07.pack(side=RIGHT)
-textpiecut=Button(frame1, text="\u2733\nPIE", font=bold, bg="green", fg="white", command=piecut,height=3,width=3,activebackground='lime green',activeforeground='white')
-textpiecut.pack(side=LEFT)
-
-frame2=Frame(window,borderwidth=8,relief=SUNKEN)
-frame2.pack(side=TOP)
-Button(frame2,text="STOP",font=bold,bg='red',fg='white',command=stop,height=2,width=18).pack(side=BOTTOM)
-
-
-
+    stop_thread = threading.Thread(target=check_stop, args=())
+    stop_thread.start()
     
-    
-window.mainloop()
 
+def run_cut(sz):
+    up()
+    global shutdown
+    currentTime = time.time()
+    global thin_cut_spc #Distance between pizza slices
+    global wide_cut_spc #Distance between the two major cuts
+    global first_cut_dist #From the home postition to the first cut on the pizza
+    global last_cut_dist #Last cut distnce away from the home position
+    inch2step = 100 #convert inches to motor steps: 20t*.2" = 4"/rev,400step/rev 
+    num_cuts = 5
+
+    global geoSensorAttribute
+
+    global thin_cut_delay
+    global wide_cut_delay
+    global first_cut_delay
+
+    first_cut_dist = tkinter.IntVar()
+    thin_cut_spc = tkinter.IntVar()
+    wide_cut_spc = tkinter.IntVar()
+    last_cut_dist = tkinter.IntVar()
+
+    print('__________________________BEGIN LOAD CALIBRATIONS FOR SIZE___________________________________________')
+
+    geoSensorAttribute =  getGeoSensorAttribute("CUT_COUNT_" + str(sz))
+
+    for attributeName in ["cond_value", "other_value", "lh_value", "rh_value", "x_value", "y_value", "z_value"]:
+        val = tkinter.IntVar()
+        val_str = ''
+
+        try:
+            val_str = geoSensorAttribute[attributeName]
+            val.set(int(val_str))
+
+            if attributeName == "cond_value":
+                first_cut_dist.set(int(val_str))
+            if attributeName == "other_value":
+                thin_cut_spc.set(int(val_str))
+            if attributeName == "lh_value":
+                wide_cut_spc.set(int(val_str))
+            if attributeName == "rh_value":
+                last_cut_dist.set(int(val_str))
+        except:
+            #set a safe default value if failed above
+            val.set(0)
+            if attributeName == "cond_value":
+                first_cut_dist.set(0)
+            if attributeName == "other_value":
+                thin_cut_spc.set(0)
+            if attributeName == "lh_value":
+                wide_cut_spc.set(0)
+            if attributeName == "rh_value":
+                last_cut_dist.set(0)
+
+        # if attributeName == "x_value":
+        #     first_cut_dist.set(val.get)
+        # if attributeName == "y_value":
+        #     first_cut_dist.set(val.get)
+        # if attributeName == "z_value":
+        #     first_cut_dist.set(val.get)
+        print("updated val_str found from dbms [" + val_str + "] and val.get [" + str(val.get()) + "] for attributeName [" + attributeName + "] size [" + str(sz) +"]")
+
+    print('__________________________END LOAD CALIBRATIONS FOR SIZE___________________________________________')
+
+
+    setCurrentGeoSensorAttributeLocal("CUTTER_RUNNING",1,1) #using the value_current ==1 to indicate "true", will flip it at the end
+
+    #****** SHOULD WE BE CHECKING FOR THE DOOR OPEN HERE? ************#
+
+
+    #GROTECONNECT
+    #   use CUTTER_RATE x,y,z,lh,rh to store thin_cut_delay,wide_cut_delay, first_cut_delay
+    #!GROTECONNECT
+    if sz == 14:
+        num_cuts = 5
+        first_cut_dist_pre = 2.375
+        thin_cut_spc_pre = 2.25
+        last_cut_dist_pre = 2.5
+        wide_cut_spc_pre = 4.0
+        tt_rot = 800
+        
+        thin_cut_delay = 0.3
+        wide_cut_delay = 0.4
+        first_cut_delay = 0.4
+        last_cut_delay = 0.4
+        tt_delay = 0.6
+    if sz == 12:
+        num_cuts = 4
+        first_cut_dist_pre = 3.375
+        thin_cut_spc_pre = 2.333
+        last_cut_dist_pre = 1.75
+        wide_cut_spc_pre = 3.5
+        tt_rot = 800
+
+        thin_cut_delay = 0.4
+        wide_cut_delay = 0.5
+        first_cut_delay = 0.5
+        last_cut_delay = 0.5
+        tt_delay = 0.6
+    if sz == 10:
+        num_cuts = 4
+        first_cut_dist_pre = 4.125
+        thin_cut_spc_pre = 1.833
+        last_cut_dist_pre = 1.25
+        wide_cut_spc_pre = 3
+        tt_rot = 800
+
+        thin_cut_delay = 0.4
+        wide_cut_delay = 0.5
+        first_cut_delay = 0.6
+        last_cut_delay = 0.5
+        tt_delay = 0.6
+    if sz == 7:
+        num_cuts = 2
+        first_cut_dist_pre = 5.825
+        thin_cut_spc_pre = 2.0
+        last_cut_dist_pre = 1
+        wide_cut_spc_pre = 0
+        tt_rot =800
+
+        first_cut_delay = 0.7
+        thin_cut_delay = 0.4
+        last_cut_delay = 0.5
+        wide_cut_delay = 0.5
+        tt_delay = 1
+
+    #Calculating the values based on the changes in the sliders from -.5 to .5
+    thin_cut_spc = (thin_cut_spc.get()+thin_cut_spc_pre)*inch2step
+    wide_cut_spc = (wide_cut_spc.get()+wide_cut_spc_pre)*inch2step
+    first_cut_dist = (first_cut_dist.get()+first_cut_dist_pre)*inch2step
+    last_cut_dist = (last_cut_dist.get()+last_cut_dist_pre)*inch2step
+
+    now = datetime.datetime.now()
+    print(now.strftime("%Y-%m-%d %H:%M:%S") + ": PARTY CUTTING PIZZA SIZE: " + str(sz))
+
+    socket_zmq.send_string("VIDEO_COUNT_" + str(sz))
+    print("IPC to socket_zmq:")
+
+    #report the status of the doors
+    # if(GPIO.input(DOOR1) == False):
+    #     setCurrentGeoSensorAttributeLocal("CUTTER_DOOR_1",1,0) #using the value_current ==1 to indicate "true", will flip it at the end
+    #     print("Door1 Closed")
+    # else:
+    #     setCurrentGeoSensorAttributeLocal("CUTTER_DOOR_1",1,1) #using the value_current ==1 to indicate "true", will flip it at the end
+    #     print("Door1 Open")
+    #
+    # if(GPIO.input(DOOR2) == False):
+    #     print("Door2 Closed")
+    # else:
+    #     print("Door2 Open")
+
+    #run the blade now
+    gantry(first_cut_dist)
+    time.sleep(first_cut_delay)
+    #Cut 1
+    down()
+    up()
+
+    for i in range(1,num_cuts):
+        #time.sleep(wide_cut_delay)
+        gantry(thin_cut_spc)
+        time.sleep(thin_cut_delay)
+        #Cut 2...n
+        down()
+        up()
+
+    turntable(tt_rot)
+    time.sleep(tt_delay)
+    gantryREV(last_cut_dist)
+    time.sleep(last_cut_delay)
+    #Cut n+1
+    down()
+    up()
+
+    if sz != 7:
+        gantryREV(wide_cut_spc)
+        time.sleep(wide_cut_delay)
+        #Cut n+2
+        down()
+        up()
+
+    #Home
+    if sz == 7: gantryREV(first_cut_dist+50)
+    else: gantryREV(first_cut_dist+(num_cuts*thin_cut_spc)-last_cut_dist-wide_cut_spc-200)
+    turntableREV(tt_rot)
+    time.sleep(tt_delay)
+
+    #Clean blade
+
+    endTime = time.time()
+    finalTime = endTime-currentTime
+    print(finalTime)
+
+    first_cut_dist = tkinter.IntVar()
+    thin_cut_spc = tkinter.IntVar()
+    wide_cut_spc = tkinter.IntVar()
+    last_cut_dist = tkinter.IntVar()
+
+    setCurrentGeoSensorAttributeLocal("CUTTER_RUNNING",1,0) #using the value_current ==1 to indicate "true", will flip it at the end
+
+    # Update if emergency stop was not made
+    if not shutdown:
+        incrementGeoSensorAttributeLocal("CUT_COUNT_" + str(sz),1,1)
+
+def run_pie_cut():
+    now = datetime.datetime.now()
+    print(now.strftime("%Y-%m-%d %H:%M:%S") + ": PIE CUTTING PIZZA")
+    gantry(int(6.875*400/4.0)) #inches*[steps/rev]/[pulley circumference]
+    time.sleep(1)
+    for i in range(4):
+        down()
+        up()
+        if i==3:break
+        turntable(700)
+        time.sleep(.8)
+    home()
+    #gantryREV(int(6.875*400/4.0))
+
+    # Update if emergency stop was not made
+    if not shutdown:
+        incrementGeoSensorAttributeLocal("CUT_COUNT_" + "PIE",1,1)
+
+# **************************************CLEAN AND PRIME**************************************
+def clean():
+    gantry(6000)
+    time.sleep(20)
+    gantryREV(6000)
+    # Set shutdown variable to false since we are running
+    #global running
+    #global shutdown
+    #shutdown = False
+
+    #if not running:
+        # Start clean program thread
+        #c = threading.Thread(target=clean_program, args=(button,))
+        #c.start()
+
+
+def clean_program(button):
+    now = datetime.datetime.now()
+    print(now.strftime("%Y-%m-%d %H:%M:%S") + ": Cleaning\n")
+
+    # Set running variable to true since we are cleaning
+    global running, shutdown, clean_prime_speed, pizzas
+    running = True
+    button.config(bg="gray60", activebackground="gray60")
+    set_active('disabled', 'p')
+    button.config(disabledforeground='black')
+
+    clean_time = time.time()
+
+    #GROTECONNECT
+    setCurrentGeoSensorAttributeLocal("SANITIZE_STARTED",1,1) #using the value_current ==1 to indicate "true", will flip it at the end
+    # setCurrentGeoSensorAttributeLocal("VIDEO_SANITIZE",1,1) #using the value_current ==1 to indicate "true", will flip it at the end
+    #but we should also set the local SAUCE count to zero
+    # setCurrentGeoSensorAttributeLocal("SAUCE_COUNT_7",0,0) #first 0 tells it to not increment historical, second 0 clears current
+    # setCurrentGeoSensorAttributeLocal("SAUCE_COUNT_10",0,0)
+    # setCurrentGeoSensorAttributeLocal("SAUCE_COUNT_12",0,0)
+    # setCurrentGeoSensorAttributeLocal("SAUCE_COUNT_14",0,0)
+
+    socket_zmq.send_string("VIDEO_SANITIZE")
+    #!GROTECONNECT
+
+    # print("Cleaning Speeds")
+    # print(seven_clean)
+    # print(ten_clean)
+    # print(twelve_clean)
+    # print(fourteen_clean)
+
+    # # Pump for 2 minutes
+    # start1 = "$STEPPER_START,PUMP1,FORWARD," + str(seven_clean) + ",0\r\n"
+    # ser.write(start1.encode())
+    # start2 = "$STEPPER_START,PUMP2,FORWARD," + str(ten_clean) + ",0\r\n"
+    # ser.write(start2.encode())
+    # start3 = "$STEPPER_START,PUMP3,FORWARD," + str(twelve_clean) + ",0\r\n"
+    # ser.write(start3.encode())
+    # start4 = "$STEPPER_START,PUMP4,FORWARD," + str(fourteen_clean) + ",0\r\n"
+    # ser.write(start4.encode())
+    # while (not shutdown) and (time.time() - clean_time < 120):
+    #     button['text'] = int(120 - (time.time() - clean_time))
+    # stop_pumping()
+
+    #GROTECONNECT
+    setCurrentGeoSensorAttributeLocal("SANITIZE_STARTED",0,0) #using the value_current ==0 to indicate "false" to turn if off
+    #the backside will compute the difference between the two timestamps
+
+
+    #!GROTECONNECT
+
+    # Update running - cleaning is done
+    running = False
+
+    # Reset the clean button
+    button.config(bg=button_color, activebackground=button_color)
+    button['text'] = "CLEAN"
+    set_active('normal', 'p')
+    button.config(disabledforeground='gray60')
+    set_color("lime green")
+
+    clean_dur = round(time.time() - clean_time)
+
+# # **************************************CLEAN AND PRIME**************************************
+# def clean_program():
+#     pass
+#
+# def clean(button):
+#     # Set shutdown variable to false since we are running
+#     global running
+#     global shutdown
+#     shutdown = False
+#
+#     if not running:
+#         # Start clean program thread
+#         c = threading.Thread(target=clean_program, args=(button,))
+#         c.start()
+#
+#
+#
+#     #!GROTECONNECT
+#
+#     # Update running - cleaning is done
+#     running = False
+#
+#     # Reset the clean button
+#     button.config(bg=button_color, activebackground=button_color)
+#     button['text'] = "CLEAN"
+#     set_active('normal', 'p')
+#     button.config(disabledforeground='gray60')
+#     set_color("lime green")
+#
+#     clean_dur = round(time.time() - clean_time)
+#
+#     # Update last clean in information json
+#     # information["last_clean"]["time"] = time.strftime("%m/%d/%Y, %H:%M:%S")
+#     # information["last_clean"]["duration"] = str(clean_dur)
+#
+#     # Update database if there is internet. Otherwise, append last pizza tuple data to local array
+#     # if check_internet():
+#     #     db.child(information['hardware']).child("Clean").child(int(clean_time)).set(int(clean_dur))
+#     # else:
+#     #     cleans.append((int(clean_time),int(clean_dur)))
+#     #     locals_not_empty = 1
+
+# *************************************CHANGE SAUCE AMT**************************************
+# Functions for setting pump amount as percentage of speeds and colors of buttons
+def set_color(color):
+    fourteenButton.config(bg=color, activebackground=color)
+    twelveButton.config(bg=color, activebackground=color)
+    tenButton.config(bg=color, activebackground=color)
+    sevenButton.config(bg=color, activebackground=color)
+
+
+# Can activate or deactive buttons. Change mod to 0 for just size, mod anything but 0 for all but stop
+def set_active(active, mod):
+    fourteenButton.config(state=active)
+    twelveButton.config(state=active)
+    sevenButton.config(state=active)
+    if mod == 'p':  # p as in process. mod should be p unless cauliflower is the amount
+        # primeButton.config(state=active)
+        cleanButton.config(state=active)
+        # extraButton.config(state=active)
+        # lightButton.config(state=active)
+        moreButton.config(state=active)
+        tenButton.config(state=active)
+    if active == 'disabled':  # When buttons are disabled, grey out for visual cue
+        set_color("grey40")
+
+
+
+
+# destroys all toplevel screen widgets. Uses to destroy all top windows to reach the home screen
+def destroy_all_screens():
+    for widget in screen.winfo_children():
+        if isinstance(widget, Toplevel):
+            widget.destroy()
+
+
+
+# ***********************************CALIBRATION SCREEN SET UP*************************************
+# Function setting up ... screen with various helpful features
+def calibration_screen():
+    global first_cut_dist
+    global thin_cut_spc
+    global wide_cut_spc
+    global last_cut_dist
+    global speed
+    global currentScreen
+
+    global thin_cut_delay
+    global wide_cut_delay
+    global first_cut_delay
+
+    global geoSensorAttribute
+
+
+    global cut_val
+    cut_val = {7: [], 10: [], 12: [], 14: []}
+
+    # Create window for more menu
+    calib = Toplevel()
+    calib.title("Cutter Calibration Screen")
+    calib.geometry('800x480')
+    # other.geometry('1024x600')
+    calib.configure(bg=main_bg)
+    calib.overrideredirect(1)
+    #other.config(cursor="none")
+
+    geoSensorAttributeWt = ''
+    geoSensorAttributeCut = ''
+    list1 = [1, 2, 3, 4, 5, 6, 7]
+    d = {'7': [], '10': [], '12': [], '14': []}
+    d['7'].append(list1)
+    print(d['7'])
+
+    calibration_header = Label(calib, text='7″  CALIBRATION', font=heading_bold_font, bg=main_bg, justify=LEFT)
+    calibration_header.place(x= 280, y = 10)
+    Button(calib,text=' ',bg='white',relief=FLAT,highlightthickness=0,command=screen.destroy).place(x=785,y=0)
+
+
+    # Notebook setup
+    ttk.Style().configure('TNotebook.Tab', font=calib_font, background=main_bg, padding=[25,0], take_focus=0)
+    size_tab = ttk.Notebook(calib)
+    size_tab.place(x=140, y=50)
+    frame = {7: Frame(size_tab, width=650, height=375),
+             10: Frame(size_tab),
+             12: Frame(size_tab),
+             14: Frame(size_tab)}
+
+    # used for incrementing values associated with sliders
+    def increment(item):
+        num = item.get()
+        if num < 10:
+            num = num + 1
+            item.set(num)
+
+    # used for decrementing the values associated with sliders
+    def decrement(item):
+        num = item.get()
+        if num > -10:
+            num = num - 1
+            item.set(num)
+
+    # When a user changes the tab, the corresponding title and test button text are changed
+    def set_tab(event):
+        sizes = [7, 10, 12, 14]
+        i = size_tab.index("current")
+        if size_tab.index("current") == 0:
+            calibration_header.config(text='  ' + str(sizes[i]) + '″   CALIBRATION')
+        else:
+            calibration_header.config(text='  ' + str(sizes[i]) + '″ CALIBRATION')
+        testButton.config(command=lambda: test_set_size(sizes[i]), text=str(sizes[i]) + '″\nTEST')
+
+
+    def slider_update(sz,value):
+        print("slider update sz is [" + str(sz) + "] and value [" + str(value) + "]")
+        updateGeoSensorAttribute("CUT_COUNT_" + str(sz), cut_val[sz][0].get(), cut_val[sz][1].get(), cut_val[sz][2].get(), cut_val[sz][3].get(), cut_val[sz][4].get(), cut_val[sz][5].get(), cut_val[sz][6].get())
+
+
+    for sz in [7, 10, 12, 14]:  # for each size tab, populate appropriate sliders and labels
+        frame[sz].pack()
+        xframe = 230
+
+        size_tab.add(frame[sz], text=' ' + str(sz) + '" ')
+
+        pieButton = Button(calib, text="PIE CUT", font=med_font, activebackground=button_color, bg=button_color,
+                           fg=main_fg,
+                           command=lambda: [destroy_all_screens()], height=1, width=7)
+        pieButton.place(x=450, y=120)
+
+        halfButton = Button(calib, text="HALF CUT", font=med_font, activebackground=button_color, bg=button_color,
+                            fg=main_fg,
+                            command=lambda: [destroy_all_screens()], height=1, width=7)
+        halfButton.place(x=560, y=120)
+
+        first_cut_dist = tkinter.IntVar()
+        thin_cut_spc = tkinter.IntVar()
+        wide_cut_spc = tkinter.IntVar()
+        last_cut_dist = tkinter.IntVar()
+
+        thin_cut_delay = 2
+        wide_cut_delay = 2
+        first_cut_delay = 2
+
+        #query the GeoSensorAttribute table for current configurations for this SIZE and load the cut_val array
+        geoSensorAttribute =  getGeoSensorAttribute("CUT_COUNT_" + str(sz))
+        for attributeName in ["cond_value", "other_value", "lh_value", "rh_value", "x_value", "y_value", "z_value"]:
+            # val = IntVar()
+            val = tkinter.IntVar()
+            val_str = ''
+
+            try:
+                val_str = geoSensorAttribute[attributeName]
+                val.set(int(val_str))
+            except:
+                #set a safe default value if failed above
+                val.set(0)
+
+            print("val_str found from dbms [" + val_str + "] and val.get [" + str(val.get()) + "] for attributeName [" + attributeName + "] size [" + str(sz) +"]")
+            cut_val[sz].append(val)
+
+
+        slider1 = Scale(frame[sz], variable=cut_val[sz][0], command=lambda value, sz=sz: slider_update(sz, value), orient=VERTICAL, length=230, width=35, from_=.5, to=-.5, resolution=.1, font=small_font).place(x=xframe, y=120)
+        label1 = Label(frame[sz], text="First Cut \nDistance", font=med_font, bd=-2).place(x=xframe, y=80)
+
+        slider2 = Scale(frame[sz], variable=cut_val[sz][1], command=lambda value, sz=sz: slider_update(sz, value), orient=VERTICAL, length=230, width=35, from_=.5, to=-.5, resolution=.1, font=small_font).place(x=xframe+100, y=120)
+        label2 = Label(frame[sz], text="Thin Cut \nSpacing", font=med_font, bd=-2).place(x=xframe+100, y=80)
+
+        slider3 = Scale(frame[sz], variable=cut_val[sz][2], command=lambda value, sz=sz: slider_update(sz, value), orient=VERTICAL, length=230, width=35, from_=.5, to=-.5, resolution=.1, font=small_font).place(x=xframe+300, y=120)
+        label3 = Label(frame[sz], text="Wide Cut \nSpacing", font=med_font, bd=-2).place(x=xframe+200, y=80)
+
+        slider4 = Scale(frame[sz], variable=cut_val[sz][3], command=lambda value, sz=sz: slider_update(sz, value), orient=VERTICAL, length=230, width=35, from_=.5, to=-.5, resolution=.1, font=small_font).place(x=xframe+200, y=120)
+        label4 = Label(frame[sz], text="Cross Cut \nDistance", font=med_font, bd=-2).place(x=xframe+300, y=80)
+
+        #Main cutter image
+        # imgPATH = 'CCP/'+ str(sz) +'in.png'
+        imgPATH = 'filepath'+ str(sz) +'in.png'
+        # photo = PIL.ImageTk.PhotoImage(PIL.Image.open(imgPATH).resize((200, 200)))
+        photo = PIL.ImageTk.PhotoImage(PIL.Image.open(filepath + str(sz) +'in.png').resize((200, 200)))
+        img = Label(frame[sz], image=photo)
+        img.photo = photo
+        img.pack()
+        img.place(x=20, y=120)
+
+    # Like set_active but for the test button
+    # Changes the state of all widgets on the config screen
+    def test_set_active(active, _):
+        testButton.config(state=active)
+        homeButton.config(state=active)
+        helpButton.config(state=active)
+        wifiButton.config(state=active)
+        idx = size_tab.index("current")
+
+    size_tab.bind('<<NotebookTabChanged>>',set_tab)
+    # Like set_size but for the test button. Calls run_saucer but passes test_set_active and deactivates calibration widgets
+    def test_set_size(sz):
+        global size
+        size = sz
+        #test_set_active('disabled', '')
+        run_cut(sz)
+        #test_set_active('enabled', '')
+
+    # Like emergency stop, but for the test button. This stops the test from running.
+    def test_emergency_stop():
+        global shutdown
+        shutdown = True
+        testButton.config(bg="lime green", activebackground="lime green")
+        #GROTECONNECT
+        incrementGeoSensorAttributeLocal("CUTTER_STOP",1,1)
+        # incrementGeoSensorAttributeLocal("VIDEO_STOP",1,1)
+        # socket_zmq.send_string("VIDEO_STOP")
+        test_set_active('normal', '')
+
+
+    homeButton = Button(calib, text="HOME", font=heading_font, activebackground=button_color, bg=button_color,
+                        fg=main_fg,
+                        command=lambda: [destroy_all_screens()], height=3, width=5)
+    homeButton.place(x=0, y=0)
+
+    helpButton = Button(calib, text="HELP", font=heading_font, activebackground=button_color, bg=button_color,
+                        fg=main_fg,
+                        command=lambda: [trouble_shooting_screen()], height=3, width=5)
+    helpButton.place(x=0, y=95)
+
+    wifiButton = Button(calib, text="WIFI", font=heading_font, activebackground=button_color, bg=button_color,
+                        fg=main_fg,
+                        command=lambda: [wifi_screen()], height=3, width=5)
+    wifiButton.place(x=0, y=190)
+    testButton = Button(calib, text="7″\nTEST", font=heading_font, activebackground="lime green", activeforeground="white",
+                        bg="lime green", fg="white", disabledforeground="white", command=lambda: test_set_size(7),
+                        height=3, width=5)
+    testButton.place(x=0, y=285)
+    stopTestButton = Button(calib, text='STOP', font=heading_font, activebackground="red", activeforeground="white", bg="red",
+                            fg="white", disabledforeground="white", command=test_emergency_stop, height=3, width=5)
+    stopTestButton.place(x=0, y=380)
+
+
+def trouble_shooting_screen():
+    global speed
+    global currentScreen
+
+    tss = Toplevel()
+    tss.title("Cutter Troubleshooting Screen")
+    tss.geometry('800x480')
+    # tss.geometry('1024x600')
+    tss.configure(bg=main_bg)
+    tss.overrideredirect(1)
+    tss.config(cursor="none")
+
+    imgs = []
+    imgButton = []
+    buttonLabel = ['Under Weight', 'Over Weight', 'Missing Ring', 'Heavy Ring', 'Center Hole', 'Center Puddle',
+                   'Off Center', 'Far From Edge', 'Other Issue']
+    buttonText = [
+        'In the settings screen, select the appropriate size tab and increase the weight slider for the amount of sauce being applied',
+        'In the settings screen, select the appropriate size tab and decrease the weight slider for the amount of sauce being applied',
+        'In the settings screen, select the appropriate size tab and increase the zone slider for the missing ring',
+        'In the settings screen, select the appropriate size tab and decrease the zone slider for the heavy ring',
+        'Brush out center nozzle holes',
+        'Brush out all nozzle holes',
+        'Center dough and pan on turntable',
+        'Push nozzle blocks all the way back in the holder',
+        'Call Craig at 614-226-4421\n\n']
+    help_var = StringVar()
+    help_var.set('Troubleshooting help: select an issue for assistance')
+    xcoord = [0, 1, 2, 0, 1, 2, 0, 1, 2]
+    ycoord = [0, 0, 0, 1, 1, 1, 2, 2, 2]
+    helptext = Text(tss, font=heading_font, wrap=WORD, bg='white', fg=main_fg, width=18, height=14)
+    helptext.insert(INSERT, help_var.get())
+    helptext.place(x=110, y=10)
+    for i in range(9):
+        xcoord[i] = xcoord[i] * 120 + 400
+        ycoord[i] = ycoord[i] * 140 + 20
+        imgs.append(PIL.ImageTk.PhotoImage(
+            PIL.Image.open(filepath + 'ts' + str(i + 1) + '.png').resize((100, 100), PIL.Image.ANTIALIAS)))
+        imgButton.append(
+            Button(tss, text=buttonLabel[i], image=imgs[i], compound=TOP, font=small_font, bg=button_color,
+                   fg=main_fg))
+        imgButton[i].photo = imgs[i]
+        imgButton[i].config(command=lambda i=i: [helptext.delete('1.0', END), helptext.insert(INSERT, buttonText[i])])
+        imgButton[i].place(x=xcoord[i], y=ycoord[i])
+
+    homeButton = Button(tss, text="HOME", font=heading_font, activebackground=button_color, bg=button_color,
+                        fg=main_fg,
+                        command=lambda: [destroy_all_screens()], height=3, width=5)
+    homeButton.place(x=0, y=0)
+    dataButton = Button(tss, text="BACK", font=heading_font, activebackground=button_color, bg=button_color,
+                        fg=main_fg,
+                        command=lambda: [tss.destroy()], height=3, width=5)
+    dataButton.place(x=0, y=95)
+
+
+def wifi_screen():
+    wfs = Toplevel()
+    wfs.title("Cutter Wifi Screen")
+    wfs.geometry('800x480')
+    # wfs.geometry('1024x600')
+    wfs.configure(bg=main_bg)
+    wfs.overrideredirect(1)
+    wfs.config(cursor="none")
+
+    class _PopupKeyboard(Toplevel):
+        """
+        A Top level instance that displays a keyboard that is attached to
+        another widget. Only the Entry widget has a subclass in this version.
+        """
+
+        def __init__(self, parent, attach, x, y, keycolor, keysize=5):
+            """
+            Popup Keyboard
+            :param parent: parent
+            :param attach: is attached to
+            :param x: x position
+            :param y: y position
+            :param keycolor: key color
+            :param keysize: key size
+            """
+            Toplevel.__init__(self, takefocus=0)
+
+            # self.overrideredirect(True)
+            self.attributes('-alpha', 0.85)
+
+            self.parent = parent
+            self.attach = attach
+            self.keysize = keysize
+            self.keycolor = keycolor
+            self.x = x
+            self.y = y
+
+            self.board = Frame(self.parent)
+            self.board.place(x=35, y=300)
+
+            self.normal_keys = Frame(self.board)
+            self.normal_keys.pack(fill=BOTH)
+
+            self.row0 = Frame(self.normal_keys)
+            self.row1 = Frame(self.normal_keys)
+            self.row2 = Frame(self.normal_keys)
+            self.row3 = Frame(self.normal_keys)
+            self.row4 = Frame(self.normal_keys)
+
+            self.row0.grid(row=0)
+            self.row1.grid(row=1)
+            self.row2.grid(row=2)
+            self.row3.grid(row=3)
+            self.row4.grid(row=4, columnspan=5, sticky=W + E + N + S)
+
+            self.shift_keys = Frame(self.board)
+            self.s_row0 = Frame(self.shift_keys)
+            self.s_row1 = Frame(self.shift_keys)
+            self.s_row2 = Frame(self.shift_keys)
+            self.s_row3 = Frame(self.shift_keys)
+            self.s_row4 = Frame(self.shift_keys)
+
+            self.s_row0.grid(row=0)
+            self.s_row1.grid(row=1)
+            self.s_row2.grid(row=2)
+            self.s_row3.grid(row=3)
+            self.s_row4.grid(row=4, columnspan=5, sticky=W + E + N + S)
+
+            self._init_keys()
+
+            # resize to fit keys
+            # self.update_idletasks()
+
+            # x = (self.winfo_screenwidth() - self.winfo_width()) / 2
+            # y = (self.winfo_screenheight() - self.winfo_height()) - 20
+
+            # self.geometry('{}x{} + {} + {}'.format(self.winfo_width(),
+            #                                    self.winfo_height(),
+            #                                    x, y))
+
+            self.geometry('{}x{}'.format(self.winfo_width(),
+                                         self.winfo_height()))
+
+        def _init_keys(self):
+            self.alpha = {
+                'row0': ['`', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '<-'],
+                'row1': ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\\'],
+                'row2': ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', "'", 'Enter'],
+                'row3': ['Shift', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/'],
+                'row4': ['Space']
+            }
+
+            self.shift_alpha = {
+                'row0': ['~', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', '<-'],
+                'row1': ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', '|'],
+                'row2': ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '"', 'Enter'],
+                'row3': ['Shift', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?'],
+                'row4': ['Space']
+            }
+
+            for row in self.alpha:  # iterate over dictionary of rows
+                if row == 'row0':
+                    i = 1  # for readability and functionality
+                    for k in self.alpha[row]:
+                        Button(self.row0,
+                               text=k,
+                               width=self.keysize,
+                               bg=self.keycolor,
+                               command=lambda k=k: self._attach_key_press(k)).grid(row=0, column=i)
+                        i += 1
+                if row == 'row1':  # TO-DO: re-write this method
+                    i = 1  # for readability and functionality
+                    for k in self.alpha[row]:
+                        Button(self.row1,
+                               text=k,
+                               width=self.keysize,
+                               bg=self.keycolor,
+                               command=lambda k=k: self._attach_key_press(k)).grid(row=0, column=i)
+                        i += 1
+                elif row == 'row2':
+                    i = 2
+                    for k in self.alpha[row]:
+                        Button(self.row2,
+                               text=k,
+                               width=self.keysize,
+                               bg=self.keycolor,
+                               command=lambda k=k: self._attach_key_press(k)).grid(row=0, column=i)
+                        i += 1
+                elif row == 'row3':
+                    i = 2
+                    for k in self.alpha[row]:
+                        Button(self.row3,
+                               text=k,
+                               width=self.keysize,
+                               bg=self.keycolor,
+                               command=lambda k=k: self._attach_key_press(k)).grid(row=0, column=i)
+                        i += 1
+                elif row == 'row4':
+                    i = 3
+                    for k in self.alpha[row]:
+                        Button(self.row4, text=k, width=self.keysize, bg=self.keycolor,
+                               command=lambda k=k: self._attach_key_press(k)).pack(fill=X)
+                        i += 1
+
+            for row in self.shift_alpha:  # iterate over dictionary of rows
+                if row == 'row0':
+                    i = 1  # for readability and functionality
+                    for k in self.shift_alpha[row]:
+                        Button(self.s_row0,
+                               text=k,
+                               width=self.keysize,
+                               bg=self.keycolor,
+                               command=lambda k=k: self._attach_key_press(k)).grid(row=0, column=i)
+                        i += 1
+                if row == 'row1':
+                    i = 1  # for readability and functionality
+                    for k in self.shift_alpha[row]:
+                        Button(self.s_row1,
+                               text=k,
+                               width=self.keysize,
+                               bg=self.keycolor,
+                               command=lambda k=k: self._attach_key_press(k)).grid(row=0, column=i)
+                        i += 1
+                elif row == 'row2':
+                    i = 2
+                    for k in self.shift_alpha[row]:
+                        Button(self.s_row2,
+                               text=k,
+                               width=self.keysize,
+                               bg=self.keycolor,
+                               command=lambda k=k: self._attach_key_press(k)).grid(row=0, column=i)
+                        i += 1
+                elif row == 'row3':
+                    i = 2
+                    for k in self.shift_alpha[row]:
+                        Button(self.s_row3,
+                               text=k,
+                               width=self.keysize,
+                               bg=self.keycolor,
+                               command=lambda k=k: self._attach_key_press(k)).grid(row=0, column=i)
+                        i += 1
+                elif row == 'row4':
+                    i = 3
+                    for k in self.shift_alpha[row]:
+                        Button(self.s_row4, text=k, width=self.keysize, bg=self.keycolor,
+                               command=lambda k=k: self._attach_key_press(k)).pack(fill=X)
+                        i += 1
+
+        def destroy_popup(self):
+            self.destroy()
+
+        def _attach_key_press(self, k):
+            if k == 'Space':
+                self.attach.insert(END, ' ')
+
+            elif k == 'Shift':
+                if self.normal_keys.winfo_ismapped():
+                    self.normal_keys.pack_forget()
+                    self.shift_keys.pack(fill=BOTH)
+                else:
+                    self.shift_keys.pack_forget()
+                    self.normal_keys.pack(fill=BOTH)
+
+            elif k == '<-':
+                self.attach.delete(len(self.attach.get()) - 1)
+
+            elif k == 'Enter':
+                self.attach.event_generate('<<Fout>>')
+
+            else:
+                self.attach.insert(END, k)
+
+    class KeyboardEntry(Frame):
+        """
+        A entry widget with a popup keyboard subclass. Input in widget
+        using the popup keyboard.
+        """
+        def __init__(self, parent, keysize=3, keycolor='white', *args, **kwargs):
+            Frame.__init__(self, parent)
+            self.parent = parent
+
+            self.entry = Entry(self, *args, **kwargs)
+            self.entry.pack()
+
+            self.keysize = keysize
+            self.keycolor = keycolor
+
+            self.state = 'idle'
+
+            self.entry.bind('<Button-1>', self._call_popup)
+            self.entry.bind('<<Fout>>', self._destroy_popup)
+            self.entry.bind('<FocusOut>', self._destroy_popup)
+
+        def _call_popup(self, event):
+
+            if (not hasattr(self, 'kb')) or (hasattr(self, 'kb') and self.kb is None):
+                self.kb = _PopupKeyboard(attach=self.entry, parent=self.parent, x=self.entry.winfo_rootx(),
+                                         y=self.entry.winfo_rooty() + self.entry.winfo_reqheight(),
+                                         keysize=self.keysize,
+                                         keycolor=self.keycolor)
+            elif not hasattr(self, 'kb'):
+                self.kb = _PopupKeyboard(attach=self.entry, parent=self.parent, x=self.entry.winfo_rootx(),
+                                         y=self.entry.winfo_rooty() + self.entry.winfo_reqheight(),
+                                         keysize=self.keysize,
+                                         keycolor=self.keycolor)
+
+        def _destroy_popup(self, event):
+            if hasattr(self, 'kb'):
+                if self.kb is not None:
+                    self.kb.destroy_popup()
+                self.kb = None
+
+        def get_text(self):
+            text = self.entry.get()
+            self.entry.delete(0, 'end')
+            return text
+
+        def replace(self, newtext):
+            self.entry.delete(0,'end')
+            self.entry.insert(0, newtext)
+
+    # Adds wifi config to local json
+    def CreateWifiConfig(SSID, password):
+
+        print("-> Adding wifi")
+
+        # List the networks in wpa_supplicant.conf
+        def network_list():
+            networks = subprocess.check_output("wpa_cli list_network", shell=True)
+            networks = networks.decode("utf-8")
+            networks = networks.split("flags")[1]
+            networks = networks.split("\n")
+            networks = [n.replace("\tany\t","") for n in networks]
+            networks = [n.replace("[DISABLED]","") for n in networks]
+            networks = [n.replace("[ENABLED]","") for n in networks]
+            networks = [n[(int(n.find("\t"))+1):] for n in networks]
+            networks = [*set(list(filter(None, networks)))]
+            return networks
+
+        networks = network_list()
+
+        if SSID in networks:
+            # If SSID config already exists, remove it
+            subprocess.call(f"wpa_cli remove_network {networks.index(SSID)}", shell=True)
+            # Get networks list again
+            networks = network_list()
+
+        # Add a network
+        subprocess.call("wpa_cli add_network", shell=True)
+
+        # New network will be the last entry in the list of configs
+        new_entry_num = len(networks)
+
+        # Set the new network SSID
+        subprocess.call(f"wpa_cli set_network {new_entry_num} ssid '\"{SSID}\"'", shell=True)
+
+        # Set the new network password
+        subprocess.call(f"wpa_cli set_network {new_entry_num} psk '\"{password}\"'", shell=True)
+
+        # Set the new network key_mgmt
+        subprocess.call(f"wpa_cli set_network {new_entry_num} key_mgmt 'WPA-PSK'", shell=True)
+
+        # Enable the new network
+        subprocess.call(f"wpa_cli enable {new_entry_num}", shell=True)
+
+        # Save the config
+        subprocess.call(f"wpa_cli save_config", shell=True)
+
+        # Select the new network
+        subprocess.call(f"wpa_cli select_network {new_entry_num}", shell=True)
+
+        # Reconfigure wifi, retry to connect to networks without restarting
+        subprocess.Popen(f"wpa_cli -i wlan0 reconfigure", shell=True)
+
+        print("-> Wifi added !")
+
+    # Adds wifi config to local json
+    def ListWifiConfigs():
+        print("-> Retrieving configs")
+
+        try:
+            # Read file WPA suppliant
+            networks = []
+            with open("/etc/wpa_supplicant/wpa_supplicant.conf", "r") as f:
+                in_lines = f.readlines()
+
+            # Discover networks
+            out_lines = []
+            networks = []
+            i = 0
+            isInside = False
+            for line in in_lines:
+                if "network={" == line.strip().replace(" ", ""):
+                    networks.append({})
+                    isInside = True
+                elif "}" == line.strip().replace(" ", ""):
+                    i += 1
+                    isInside = False
+                elif isInside:
+                    key_value = line.strip().split("=")
+                    networks[i][key_value[0]] = key_value[1]
+                else:
+                    out_lines.append(line)
+            return networks
+        except:
+            return {}
+
+    # Lists wireless networks ssids available
+    def ListSSIDS():
+        ssids = []
+        for attempt in range(3):
+            try:
+                ssids = subprocess.check_output("sudo iwlist wlan0 scan |grep -i SSID", shell=True)
+                ssids = ssids.decode("utf-8")
+                ssids = ssids.split("\n")
+                ssids = [s.strip() for s in ssids]
+                ssids = [s.replace("\"","") for s in ssids]
+                ssids = [s.replace("ESSID:","") for s in ssids]
+                ssids = [*set(list(filter(None, ssids)))]
+                ssids = sorted(ssids)
+            except subprocess.CalledProcessError as e:
+                ssids = []
+            else:
+                break
+
+        return ssids
+
+
+    # Shows if the saucer is connected to wifi or not
+    wifiOnImg = PIL.ImageTk.PhotoImage(PIL.Image.open(filepath + 'wifiOn.png'))
+    wifiOffImg = PIL.ImageTk.PhotoImage(PIL.Image.open(filepath + 'wifiOff.png'))
+
+    wifi_info = "No internet connection!"
+
+    if check_internet():
+        wifiLabel = Label(wfs, image=wifiOnImg, bg=main_bg, width=43, height=43)
+        wifiLabel.image = wifiOnImg
+        wifi_info = "Connected to the internet"
+    else:
+        wifiLabel = Label(wfs, image=wifiOffImg, bg=main_bg, width=43, height=43)
+        wifiLabel.image = wifiOffImg
+    wifiLabel.place(x=150, y=20)
+
+    wifi_label = Label(wfs, text=wifi_info, font=data_size_font, bg=main_bg)
+    wifi_label.place(x=200, y=20)
+
+    # **** LOCAL WIFI CONFIGS ****
+
+    global wifi_configs
+    wifi_configs = []
+
+    def fill_wifi_configs_list():
+        global wifi_configs
+        wifi_configs = ListWifiConfigs()
+        # Fill wifi configs listbox
+        idx = 0
+        for things in wifi_configs:
+            wifi_config_list.insert(idx, things['ssid'].strip('"'))
+            idx += 1
+
+    # Label for the wifi networks already configured
+    wifi_config_label = Label(wfs, text="Registered:", font=diag_font, bg=main_bg)
+    wifi_config_label.place(x=150, y=300)
+
+    wifi_config_scrollbar = Scrollbar(wfs, width=15)
+    wifi_config_scrollbar.place(x=135, y=335, height=112)
+
+    # List of the wifi network configs
+    wifi_config_list = Listbox(wfs, activestyle='none', selectmode='browse', cursor='none', height='6', width='36')
+    wifi_config_list.place(x=150, y=335)
+
+    wifi_config_list.config(yscrollcommand = wifi_config_scrollbar.set)
+    wifi_config_scrollbar.config(command = wifi_config_list.yview)
+
+    fwcl = threading.Thread(fill_wifi_configs_list())
+    fwcl.start()
+
+    # **** AVAILABLE NETWORKS ****
+
+    global wifi_networks
+    wifi_networks = []
+
+    def fill_wifi_networks_list():
+        global wifi_networks
+        wifi_networks = ListSSIDS()
+        # Fill available wifi networks listbox
+        idx = 0
+        for thing in wifi_networks:
+            wifi_network_list.insert(idx, thing)
+            idx += 1
+
+    # Label for the wifi networks available
+    wifi_network_label = Label(wfs, text="Available:", font=diag_font, bg=main_bg)
+    wifi_network_label.place(x=475, y=300)
+
+    wifi_network_scrollbar = Scrollbar(wfs, width=15)
+    wifi_network_scrollbar.place(x=460, y=335, height=112)
+
+    # List of the available wifi networks
+    wifi_network_list = Listbox(wfs, activestyle='none', selectmode='browse', cursor='none', height='6', width='36')
+    wifi_network_list.place(x=475, y=335)
+
+    wifi_network_list.config(yscrollcommand = wifi_network_scrollbar.set)
+    wifi_network_scrollbar.config(command = wifi_network_list.yview)
+
+    fwnl = threading.Thread(fill_wifi_networks_list())
+    fwnl.start()
+
+    # idx = 1
+    # for things in wifi_networks:
+    #     wifi_config_list.insert(idx, "SSID: " + things['ssid'] + " - PASSWORD: " + things['psk'])
+    #     idx += 1
+
+    # * SSID ENTRY *
+    ssid_label = Label(wfs, text="SSID:", font=diag_font, bg=main_bg)
+    ssid_label.place(x=150, y=110)
+    ssid_entry = KeyboardEntry(wfs, keycolor='white', keysize=3, font=diag_font, cusor=None)
+    ssid_entry.place(x=225, y=110)
+
+    # * PASSWORD ENTRY *
+
+    pass_label = Label(wfs, text="PWD:", font=diag_font, bg=main_bg)
+    pass_label.place(x=150, y=160)
+    pass_entry = KeyboardEntry(wfs, keycolor='white', keysize=3, font=diag_font, cusor=None)
+    pass_entry.place(x=225, y=160)
+
+    # Fill in the entry boxes with the wifi config selected
+    def configFill(event):
+        if wifi_config_list.curselection():
+            ssid_entry.replace(wifi_configs[wifi_config_list.curselection()[0]]['ssid'].replace('"', ''))
+            pass_entry.replace(wifi_configs[wifi_config_list.curselection()[0]]['psk'].replace('"', ''))
+
+    wifi_config_list.bind('<<ListboxSelect>>', configFill)
+
+    # Fill in the ssid entry box with the ssid selected
+    def wifiFill(event):
+        if wifi_network_list.curselection():
+            ssid_entry.replace(wifi_networks[wifi_network_list.curselection()[0]])
+            pass_entry.replace("")
+
+    wifi_network_list.bind('<<ListboxSelect>>', wifiFill)
+
+    # Destroy keyboard
+    # def destroy_keyboard():
+    #     boards = []
+    #     jdx = 0
+    #     while jdx < len(wfs.winfo_children()):
+    #         if str(wfs.winfo_children()[jdx]).find("frame") > 0:
+    #             boards.append(jdx)
+    #         jdx += 1
+    #     boards.reverse()
+    #     for board in boards:
+    #         wfs.winfo_children()[board].destroy()
+
+    # For destroying the keyboard entity after clicking off of it
+    # def onClick(event):
+    #     destroy_keyboard()
+    #     print(wifi_networks)
+
+    # Destroy keyboard if clicked off
+    # wfs_canvas.bind('<Button-1>', onClick)
+
+    # Sends ssid_entry
+    def submit():
+        ssid = ssid_entry.get_text()
+        password = pass_entry.get_text()
+        CreateWifiConfig(ssid, password)
+        # destroy_keyboard()
+
+    # Clears the entry boxes
+    def clear():
+        ssid_entry.replace("")
+        pass_entry.replace("")
+
+    # Change focus when something is pressed
+    def change_focus(event):
+        event.widget.focus_set()
+
+    submitButton = Button(wfs, text="Submit", font=diag_font, activebackground=button_color, bg=button_color, fg=main_fg,
+                          command=lambda:[submit()], height=1, width=5)
+    submitButton.place(x=135, y=220)
+
+    homeButton = Button(wfs, text="HOME", font=heading_font, activebackground=button_color, bg=button_color,
+                        fg=main_fg,
+                        command=lambda: [destroy_all_screens()], height=3, width=5)
+    homeButton.place(x=0, y=0)
+    dataButton = Button(wfs, text="BACK", font=heading_font, activebackground=button_color, bg=button_color,
+                        fg=main_fg,
+                        command=lambda: [wfs.destroy()], height=3, width=5)
+    dataButton.place(x=0, y=95)
+
+    # For deselecting widgets when another widget is pressed
+    # wfs.bind_all('<Button>', change_focus)
+
+# **************************************TKINTER SET UP***************************************
+
+# TK screen set up
+screen = Tk()
+screen.overrideredirect(1)
+screen.geometry('800x480')
+# screen.geometry('1024x600')
+screen.configure(bg=main_bg)
+screen.title("Sm^rt Cutter")
+
+
+#GROTECONNECT
+#screen.config(cursor="none")
+
+# first_cut_dist = tkinter.IntVar()
+# thin_cut_spc = tkinter.IntVar()
+# wide_cut_spc = tkinter.IntVar()
+# last_cut_dist = tkinter.IntVar()
+
+# Fonts for screen
+small_font = font.Font(family='Helvetica', size=10, weight='normal')
+small_bold_font = font.Font(family='Helvetica', size=10, weight='bold')
+med_font = font.Font(family='Helvetica', size=13, weight='bold')
+diag_font = font.Font(family='Helvetica', size=19, weight='normal')
+heading_font = font.Font(family='Helvetica', size=20, weight='normal')
+heading_bold_font = font.Font(family='Helvetica', size=24, weight='bold')
+description_font = font.Font(family='Helvetica', size=20, weight='normal')
+title_font = font.Font(family='Helvetica', size=20, weight='bold')
+other_font = font.Font(family='Helvetica', size=24, weight='normal')
+data_size_font = font.Font(family='Helvetica', size=25, weight='normal')
+calib_font = font.Font(family='Helvetica', size=28, weight='normal')
+phone_font = font.Font(family='Helvetica', size=45, weight='bold')
+stop_font = font.Font(family='Helvetica', size=50, weight='bold')
+main_size_font = font.Font(family='Helvetica', size=52, weight='bold')
+
+# Size buttons
+fourteenButton = Button(screen, text="14″", font=main_size_font, activebackground="lime green",
+                        activeforeground="white", bg="lime green", fg="white", disabledforeground="white",
+                        command=lambda: start_cut(14), height=2, width=3)
+fourteenButton.place(x=640, y=15)
+
+twelveButton = Button(screen, text="12″", font=main_size_font, activebackground="lime green", activeforeground="white"
+                      , bg="lime green", fg="white", disabledforeground="white",
+                      command=lambda: start_cut(12), height=2, width=3)
+twelveButton.place(x=430, y=15)
+
+tenButton = Button(screen, text="10″", font=main_size_font, activebackground="lime green", activeforeground="white",
+                   bg="lime green", fg="white", disabledforeground="white", command=lambda: start_cut(10),
+                   height=2, width=3)
+tenButton.place(x=222, y=15)
+
+sevenButton = Button(screen, text="7″", font=main_size_font, activebackground="lime green", activeforeground="white",
+                     bg="lime green", fg="white", disabledforeground="white", command=lambda: start_cut(7),
+                     height=2, width=3)
+sevenButton.place(x=15, y=15)
+
+# Donatos Image
+img = PIL.ImageTk.PhotoImage(PIL.Image.open(donatos_path).resize((170, 37), PIL.Image.ANTIALIAS))
+logo = Label(screen, image=img, bg=main_bg)
+logo.place(x=20, y=260)
+
+# Function button
+stopButton = Button(screen, text="STOP", font=stop_font, activebackground="red2", activeforeground="white", bg="red2",
+                    fg="white", command=emergency_stop, height=1, width=9)
+stopButton.place(x=220, y=235)
+
+moreButton = Button(screen, text="\u2699", font=stop_font, activebackground=button_color, bg=button_color, fg=main_fg,
+                    command=calibration_screen, height=1, width=3)
+moreButton.place(x=640, y=235)
+
+cleanButton = Button(screen, text="HOME", font=other_font, activebackground=button_color, bg=button_color, fg=main_fg,
+                     command=lambda: home(), height=2, width=10)
+cleanButton.place(x=15, y=380)
+
+halfButton = Button(screen, text="Half & Half", font=other_font, activebackground=button_color, bg=button_color, fg=main_fg,
+                    command=lambda: clean(), height=2, width=10)
+halfButton.place(x=305, y=380)
+
+pieButton = Button(screen, text="Pie Cut", font=other_font, activebackground=button_color, bg=button_color, fg=main_fg,
+                   command=lambda: run_pie_cut(), height=2, width=10)
+pieButton.place(x=565, y=380)
+
+mainloop()
