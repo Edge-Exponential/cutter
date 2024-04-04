@@ -194,6 +194,7 @@ os.environ['TZ'] = 'US/Eastern'
 #ser = serial.Serial("/dev/ttyS0", 115200)  # opens port with baud rate
 try: #connect to MC and define serial comm functions
     ser = serial.Serial("/dev/ttyS0",115200,writeTimeout=3)
+    ser.write(('$STEPPER_START,PUMP4,FORWARD,1000,200\r\n').encode())
 except:
     print('SERIAL ERROR')
 
