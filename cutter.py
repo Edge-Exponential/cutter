@@ -205,6 +205,10 @@ dough_color = "#EFE4B0"
 donatos_path = filepath + "tenant_logo.png"  # switched from white
 main_fg = "#000000"  # switched from FFFFFF
 
+#convert inches to motor steps
+#[200 motor steps/rev] / ([20 teeth on pulley] * [.2" pulley pitch]) * [.8 fudge factor]
+inch2step = 40 #steps/in
+
 # Variables for emergency stop
 shutdown = False
 running = False
@@ -243,7 +247,7 @@ R_EN = 23
 L_EN = 24
 RPWM = 12
 LPWM = 7
-DOOR1 = 20
+DOOR1 = 4
 HOME = 21
 
 #RPI Pin Setup
@@ -270,11 +274,11 @@ def read_info_file():
         print('new info file at '+smart.filepath+'/cutterinfo.json')
         info = {'slices': 0,'bladeslices':0, 'presets':{
             0:{'cuts':[4,0],'dist':[6.9, 800, 0, 0]},
-            7:{'cuts':[3,1],'dist':[5.8, 2.0, 1.0, 0]},
-            10:{'cuts':[4,2],'dist':[4.1, 1.8, 1.3, 3]},
-            12:{'cuts':[4,2],'dist':[3.4, 2.3, 1.8, 3.5]},
-            14:{'cuts':[5,2],'dist':[1.8, 2.3, 3.0, 5]},
-            14.5:{'cuts':[6,2],'dist':[1.7, 2.1, 2.5, 4]}
+            7:{'cuts':[3,1],'dist':[5.8, 1.8, 1.0, 0]},
+            10:{'cuts':[5,2],'dist':[4.1, 1.7, 1.3, 3]},
+            12:{'cuts':[5,2],'dist':[3.4, 2.0, 1.8, 3.5]},
+            14:{'cuts':[6,2],'dist':[2.0, 2.0, 3.0, 5]},
+            14.5:{'cuts':[7,2],'dist':[2.0, 1.8, 3.0, 5]}
             }}
         with open(smart.filepath + '/cutterinfo.json', 'w+') as writer:
             json.dump(info, writer)
@@ -294,8 +298,8 @@ def up():
     GPIO.output(R_EN,GPIO.HIGH)
     try:
         rpwm = GPIO.PWM(L_EN, 1000)
-        rpwm.start(80)
-        time.sleep(0.45)
+        rpwm.start(100)
+        time.sleep(0.4)
         rpwm.ChangeDutyCycle(0)
         rpwm.stop()
     except RuntimeError: pass
@@ -304,8 +308,8 @@ def down():
     if shutdown: return #immobilize for e-stop
     GPIO.output(R_EN,GPIO.LOW)
     rpwm = GPIO.PWM(L_EN, 1000)
-    rpwm.start(80)
-    time.sleep(0.4)
+    rpwm.start(100)
+    time.sleep(0.3)
     rpwm.ChangeDutyCycle(0)
     rpwm.stop()
 def turntable(steps):
@@ -315,11 +319,11 @@ def turntableREV(steps):
     ser.write(('$STEPPER_START,TURNTABLE,REVERSE,1500,'+str(steps)+'\r\n').encode())
     time.sleep(steps*.0012)
 def gantry(steps):
-    ser.write(('$STEPPER_START,PUMP4,FORWARD,800,'+str(steps)+'\r\n').encode())
-    time.sleep(steps*.0008+.2)
+    ser.write(('$STEPPER_START,PUMP4,FORWARD,100,'+str(steps)+'\r\n').encode())
+    time.sleep(steps*.0008+.15)
 def gantryREV(steps):
-    ser.write(('$STEPPER_START,PUMP4,REVERSE,800,'+str(steps)+'\r\n').encode())
-    time.sleep(steps*.0008+.2)
+    ser.write(('$STEPPER_START,PUMP4,REVERSE,100,'+str(steps)+'\r\n').encode())
+    time.sleep(steps*.0008+.15)
 def home(use_ref=False):
     global shutdown
     shutdown=False
@@ -359,9 +363,11 @@ class LockOut(Thread):
                 setCurrentGeoSensorAttributeLocal("CUTTER_DOOR_1",1,GPIO.input(DOOR1)) #using the value_current ==1 to indicate "true", will flip it at the end
                 if self.lockout:
                     set_active('disabled')
+                    debugLabel.config(text='DOOR OPEN')
                     shutdown=True
                 else:
                     set_active('active')
+                    debugLabel.config(text='DOOR CLOSED')
                     shutdown=False
         time.sleep(3) # 3 seconds delay
     def stop(self):
@@ -376,6 +382,9 @@ tagOut.start()
 
 def start_cut(sz):
     global shutdown
+    shutdown=False
+    debugLabel.config(text='RUNNING '+str(sz))
+    set_active('disabled')
     if sz==0: run_process = multiprocessing.Process(target=run_pie_cut)
     else: run_process = multiprocessing.Process(target=run_cut, args=(sz,))
     run_process.daemon=True
@@ -389,9 +398,13 @@ def start_cut(sz):
         debugLabel.config(text=str(round(time.time()-startTime,1))+' seconds')
         run_process.terminate()
         freeze_all_motor_function()
+        tagOut.lockout=1-tagOut.lockout #force door check on cycle stop
         print("STOPPING**************************************************")
-    stop_thread = threading.Thread(target=check_stop, args=())
+    stop_thread = threading.Thread(target=check_stop)
     stop_thread.start()
+#     run_process.join()
+#     stop_thread.join()
+#     set_active('active')
         
 def run_cut(sz):
     global shutdown
@@ -402,29 +415,19 @@ def run_cut(sz):
     global maj2_cut_spc #Distance between the two major cuts
     global maj1_cut_dist #Last cut distnce away from the home position
     global geoSensorAttribute
-    
-    inch2step = 100 #convert inches to motor steps: 20t*.2" = 4"/rev,400step/rev 
+#     set_active('disabled')
     num_cuts = info['presets'][str(sz)]['cuts']
-    first_cut_dist = info['presets'][str(sz)]['dist'][0]
-    thin_cut_spc = info['presets'][str(sz)]['dist'][1]
-    tt_rot=1700
-    maj1_cut_dist = info['presets'][str(sz)]['dist'][2]
-    maj2_cut_spc = info['presets'][str(sz)]['dist'][3]
+    first_cut_dist = info['presets'][str(sz)]['dist'][0]*inch2step
+    thin_cut_spc = info['presets'][str(sz)]['dist'][1]*inch2step
+    tt_rot=850
+    maj1_cut_dist = info['presets'][str(sz)]['dist'][2]*inch2step
+    maj2_cut_spc = info['presets'][str(sz)]['dist'][3]*inch2step
     
     setCurrentGeoSensorAttributeLocal("CUTTER_RUNNING",1,1) #using the value_current ==1 to indicate "true", will flip it at the end
-        
-    #Calculating the values based on the changes in the sliders
-    first_cut_dist = (first_cut_dist)*inch2step
-    thin_cut_spc = (thin_cut_spc)*inch2step
-    maj1_cut_dist = (maj1_cut_dist)*inch2step
-    maj2_cut_spc = (maj2_cut_spc)*inch2step
-    
-    currentTime = time.time()
     now = datetime.datetime.now()
     print(now.strftime("%Y-%m-%d %H:%M:%S") + ": PARTY CUTTING PIZZA SIZE: " + str(sz))
     paramstr=str(first_cut_dist)+' '+str(thin_cut_spc)+' '+str(maj1_cut_dist)+' '+str(maj2_cut_spc)
     print(' params: '+paramstr)
-    
     socket_zmq.send_string("VIDEO_COUNT_" + str(sz))
     print("IPC to socket_zmq:")
 
@@ -436,6 +439,7 @@ def run_cut(sz):
     #     setCurrentGeoSensorAttributeLocal("CUTTER_DOOR_1",1,1) #using the value_current ==1 to indicate "true", will flip it at the end
     #     print("Door1 Open")
     #
+    currentTime = time.time()
     home()
     gantry(first_cut_dist)
     down() #Cut 1
@@ -457,7 +461,7 @@ def run_cut(sz):
     TT.start()
     home(1)
     #Clean blade
-
+#     set_active('normal')
     endTime = time.time()
     finalTime = str(round(endTime-currentTime,1))+' seconds'
     print('cycle time = ',finalTime)
@@ -472,7 +476,7 @@ def run_pie_cut():
     now = datetime.datetime.now()
     print(now.strftime("%Y-%m-%d %H:%M:%S") + ": PIE CUTTING PIZZA")
     home()
-    cut_dist=int(info['presets']['0']['dist'][0]*400/4.0) #inches*[steps/rev]/[pulley circumference]
+    cut_dist=int(info['presets']['0']['dist'][0]*inch2step) #inches*[steps/rev]/[pulley circumference]
     cut_rot=int(info['presets']['0']['dist'][1])
     gantry(cut_dist)
     for i in range(4):
@@ -481,42 +485,9 @@ def run_pie_cut():
         if i==3:break
         turntable(cut_rot)
     home(1)
-
-    # Update if emergency stop was not made
-    if not shutdown:
+    if not shutdown: #Update if emergency stop was not made
         incrementGeoSensorAttributeLocal("CUT_COUNT_" + "PIE",1,1)
     shutdown=True #trigger run_process terminate
-
-# **************************************CLEAN AND PRIME**************************************
-def clean_program(button):
-    now = datetime.datetime.now()
-    print(now.strftime("%Y-%m-%d %H:%M:%S") + ": Cleaning\n")
-
-    # Set running variable to true since we are cleaning
-    global running, shutdown, clean_prime_speed, pizzas
-    running = True
-    button.config(bg="gray60", activebackground="gray60")
-    set_active('disabled')
-    button.config(disabledforeground='black')
-    clean_time = time.time()
-
-    #GROTECONNECT
-    setCurrentGeoSensorAttributeLocal("SANITIZE_STARTED",1,1) #using the value_current ==1 to indicate "true", will flip it at the end
-    # setCurrentGeoSensorAttributeLocal("VIDEO_SANITIZE",1,1) #using the value_current ==1 to indicate "true", will flip it at the end
-    #but we should also set the local SAUCE count to zero
-    socket_zmq.send_string("VIDEO_SANITIZE")
-    setCurrentGeoSensorAttributeLocal("SANITIZE_STARTED",0,0) #using the value_current ==0 to indicate "false" to turn if off
-    #the backside will compute the difference between the two timestamps
-    #!GROTECONNECT
-    running = False # Update running - cleaning is done
-    button.config(bg=button_color, activebackground=button_color) # Reset the clean button
-    button['text'] = "CLEAN"
-    set_active('normal')
-    button.config(disabledforeground='gray60')
-    set_color("lime green")
-
-    clean_dur = round(time.time() - clean_time)
-
 
 # *************************************CHANGE SAUCE AMT**************************************
 # Functions for setting pump amount as percentage of speeds and colors of buttons
@@ -527,11 +498,11 @@ def set_color(color):
     sevenButton.config(bg=color, activebackground=color)
     pieButton.config(bg=color, activebackground=color)
     halfButton.config(bg=color, activebackground=color)
-    if color!='grey40':color='red'
-    stopButton.config(bg=color, activebackground=color)
+#     if color!='grey40':color='red'
+#     stopButton.config(bg=color, activebackground=color)
 
 # Can activate or deactive buttons. Change mod to 0 for just size, mod anything but 0 for all but stop
-def set_active(active):
+def set_active(active): #active = 'normal' or 'disabled'
     fourteenButton.config(state=active)
     twelveButton.config(state=active)
     tenButton.config(state=active)
@@ -540,22 +511,15 @@ def set_active(active):
     pieButton.config(state=active)
     halfButton.config(state=active)
     moreButton.config(state=active)
-    stopButton.config(state=active)
-    if active == 'disabled':
-        set_color("grey40")
-        debugLabel.config(text='DOOR OPEN')
-    else:
-        set_color('lime green')
-        debugLabel.config(text='DOOR CLOSED')
+#     stopButton.config(state=active)
+    if active == 'disabled': set_color("grey40")
+    else: set_color('lime green')
+    
 # destroys all toplevel screen widgets. Uses to destroy all top windows to reach the home screen
 def destroy_all_screens():
     for widget in screen.winfo_children():
         if isinstance(widget, Toplevel):
             widget.destroy()
-
-def set_debug(text):
-    global debugLabel
-    debugLabel.config(text=text)
 
 # ***********************************CALIBRATION SCREEN SET UP*************************************
 # Function setting up ... screen with various helpful features
@@ -1392,11 +1356,11 @@ homeButton = Button(screen, text="HOME", font=other_font, activebackground=butto
 homeButton.place(x=290, y=380)
 
 halfButton = Button(screen, text="Half & Half",font=other_font,activebackground="lime green",bg="lime green",
-                    activeforeground="white",fg="white",command=lambda: start_cut(14.5), height=2, width=10)
+                    activeforeground="white",fg="white",disabledforeground='white',command=lambda: start_cut(14.5), height=2, width=10)
 halfButton.place(x=15, y=380)
 
 pieButton = Button(screen, text="Pie Cut",font=other_font,activebackground="lime green",bg="lime green",
-                    activeforeground="white",fg="white",command=lambda: start_cut(0), height=2, width=10)
+                    activeforeground="white",fg="white",disabledforeground='white',command=lambda: start_cut(0), height=2, width=10)
 pieButton.place(x=565, y=380)
 
 debugLabel=Label(screen,bg=main_bg)
