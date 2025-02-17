@@ -207,7 +207,7 @@ main_fg = "#000000"  # switched from FFFFFF
 
 #convert inches to motor steps
 #[200 motor steps/rev] / ([20 teeth on pulley] * [.2" pulley pitch]) * [.8 fudge factor]
-inch2step = 40 #steps/in
+inch2step = 80 #steps/in
 
 # Variables for emergency stop
 shutdown = False
@@ -249,6 +249,8 @@ RPWM = 12
 LPWM = 7
 DOOR1 = 4
 HOME = 21
+EN_A = 16
+EN_W = 20
 
 #RPI Pin Setup
 GPIO.setup(R_EN, GPIO.OUT)
@@ -257,6 +259,8 @@ GPIO.setup(RPWM, GPIO.OUT)
 GPIO.setup(LPWM, GPIO.OUT)
 GPIO.setup(DOOR1, GPIO.IN,pull_up_down=GPIO.PUD_UP)
 GPIO.setup(HOME, GPIO.IN,pull_up_down=GPIO.PUD_UP)
+GPIO.setup(EN_A, GPIO.OUT)
+GPIO.setup(EN_W, GPIO.OUT)
 
 # Variables for cut spacing
 global first_cut_dist
@@ -324,6 +328,14 @@ def gantry(steps):
 def gantryREV(steps):
     ser.write(('$STEPPER_START,PUMP4,REVERSE,100,'+str(steps)+'\r\n').encode())
     time.sleep(steps*.0008+.15)
+def air():
+    while True:
+        start_cut(7)
+        time.sleep(13)
+def water(dur=2):
+    GPIO.output(EN_W,GPIO.HIGH)
+    time.sleep(dur)
+    GPIO.output(EN_W,GPIO.LOW)    
 def home(use_ref=False):
     global shutdown
     shutdown=False
@@ -361,7 +373,7 @@ class LockOut(Thread):
                 self.lockout = GPIO.input(DOOR1)
                 print(now.strftime("%Y-%m-%d %H:%M:%S") + ': door position',self.lockout)
                 setCurrentGeoSensorAttributeLocal("CUTTER_DOOR_1",1,GPIO.input(DOOR1)) #using the value_current ==1 to indicate "true", will flip it at the end
-                if self.lockout:
+                if not self.lockout: #flipped bool 20241024 J3M
                     set_active('disabled')
                     debugLabel.config(text='DOOR OPEN')
                     shutdown=True
@@ -376,7 +388,7 @@ class LockOut(Thread):
         self.running = False
 
 tagOut = LockOut()
-tagOut.start()
+#tagOut.start()
 
 # **************************************RUN SIZE FUNCTIONS**************************************
 
@@ -398,7 +410,7 @@ def start_cut(sz):
         debugLabel.config(text=str(round(time.time()-startTime,1))+' seconds')
         run_process.terminate()
         freeze_all_motor_function()
-        tagOut.lockout=1-tagOut.lockout #force door check on cycle stop
+        #tagOut.lockout=1-tagOut.lockout #force door check on cycle stop
         print("STOPPING**************************************************")
     stop_thread = threading.Thread(target=check_stop)
     stop_thread.start()
@@ -410,6 +422,7 @@ def run_cut(sz):
     global shutdown
     shutdown=False
     global info
+    global inch2step
     global first_cut_dist #From the home postition to the first cut on the pizza
     global thin_cut_spc #Distance between pizza slices
     global maj2_cut_spc #Distance between the two major cuts
@@ -1337,6 +1350,9 @@ sevenButton = Button(screen, text="7″", font=main_size_font, activebackground=
                      height=2, width=3)
 sevenButton.place(x=15, y=15)
 
+#EXIT/DESTROY TKINTER
+Button(screen,text='X',bg='red',fg='white',command=screen.destroy).place(x=0,y=0)
+
 # Donatos Image
 img = PIL.ImageTk.PhotoImage(PIL.Image.open(donatos_path).resize((170, 37), PIL.Image.ANTIALIAS))
 logo = Label(screen, image=img, bg=main_bg)
@@ -1352,9 +1368,11 @@ moreButton = Button(screen, text="\u2699", font=stop_font, activebackground=butt
 moreButton.place(x=640, y=235)
 
 homeButton = Button(screen, text="HOME", font=other_font, activebackground=button_color, bg=button_color, fg=main_fg,
-                     command=lambda: home(), height=2, width=10)
-homeButton.place(x=290, y=380)
+                     command=lambda: home(), height=1, width=10)
+homeButton.place(x=290, y=360)
 
+Button(screen,text='AIR',font=other_font, activebackground=button_color, bg=button_color, fg=main_fg,
+                     command=lambda: air(), height=1, width=10).place(x=290,y=410)
 halfButton = Button(screen, text="Half & Half",font=other_font,activebackground="lime green",bg="lime green",
                     activeforeground="white",fg="white",disabledforeground='white',command=lambda: start_cut(14.5), height=2, width=10)
 halfButton.place(x=15, y=380)
@@ -1365,8 +1383,6 @@ pieButton.place(x=565, y=380)
 
 debugLabel=Label(screen,bg=main_bg)
 debugLabel.place(x=340,y=320)
-                 
-Button(screen,text='X',bg='red',fg='white',command=screen.destroy).place(x=0,y=0)
 
 tagOut.lockout=1-tagOut.lockout #force door check on startup after button objects are created
 mainloop()
